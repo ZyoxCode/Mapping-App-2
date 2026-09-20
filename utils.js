@@ -51,3 +51,14 @@ function plotPoint(index, x, y, map) {
         map.ctx.lineTo(projX, projY);
     }
 }
+
+
+function applyStyle(ctx, style) {
+    for (let attrName in DEFAULT_STYLE) {
+        ctx[attrName] = DEFAULT_STYLE[attrName];
+    }
+    for (let attrName in style) {
+        if (style[attrName] != null)
+        ctx[attrName] = style[attrName];
+    }
+}

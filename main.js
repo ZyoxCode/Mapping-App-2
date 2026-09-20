@@ -5,17 +5,23 @@ canvas.height = document.documentElement.clientHeight;
 let redrawScheduled = false;
 
 const mapLayers = [
-    new RectLayer([-180, -90], [180, 90], '#5dbae6'),
+    new RectLayer(
+        [-180, -90], 
+        [180, 90], 
+        '#5dbae6'
+    ),
     new SHPLayer({
-        'renders': {
-            'fill': true,
-            'stroke': false
-        },
+        'renders': ['fill'],
         'layers': [
             { 'path': 'ne_110m_land' },
             { 'path': 'ne_50m_land' },
             { 'path': 'ne_10m_land' },
-        ]
+        ],
+        'style': {
+            'strokeStyle': null,
+            'fillStyle': '#ade78e',
+        }
+
     })
 
 ]

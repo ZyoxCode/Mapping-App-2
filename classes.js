@@ -57,7 +57,6 @@ class Map {
     }
 
     render() {
-        
         this.ctx.fillStyle = '#ffffff';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         for (let layer of this.layers) {
@@ -145,13 +144,13 @@ class SHPLayer extends Layer {
             switch (geometry.type) {
                 case 'Polygon':
                     map.ctx.beginPath();
-                    map.ctx.fillStyle = "#6b8a71";
+                    applyStyle(map.ctx, this.config.style);
                     for (let [index, [x, y]] of geometry.coordinates[0].entries()) {
                         plotPoint(index, x, y, map);
                     }
-                    if (this.config.renders.fill) {
+                    if (this.config.renders.includes('fill')) {
                         map.ctx.fill();
-                    } else if (this.config.renders.stroke) {
+                    } else if (this.config.renders.includes('stroke')) {
                         map.ctx.stroke();
                     }
                     map.ctx.closePath();
