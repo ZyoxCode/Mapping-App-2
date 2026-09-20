@@ -162,7 +162,17 @@ class SHPLayer extends Layer {
         for (let feature of this.shps[index].features) {
             
             const geometry = feature.geometry;
+            const style = this.config.style.styles[this.config.style.selector(feature.properties)];
+
+            applyStyle(map.ctx, style);
             renderGeometry(map, geometry, this.config);
         }
+    }
+}
+
+class StyleRule {
+    constructor(styles, selector=(properties) => {return 0;}) {
+        this.styles = styles;
+        this.selector = selector;
     }
 }

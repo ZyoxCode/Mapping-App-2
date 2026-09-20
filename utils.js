@@ -109,16 +109,34 @@ function prepareGeometry(geometry) {
         geometry._mercatorCoords = geometry.coordinates.map(poly => 
             poly.map(ring => ring.map(([lon, lat]) => lonLatToMercator(lon, lat)))
         );
+    } else if (geometry.type === 'LineString') {
+        geometry._mercatorCoords = geometry.coordinates.map(([lon, lat]) => 
+            lonLatToMercator(lon, lat)
+       );
+    } else if (geometry.type === 'MultiLineString') {
+        geometry._mercatorCoords = geometry.coordinates.map((line) => 
+            line.map(([lon, lat]) => lonLatToMercator(lon, lat))
+        );
     }
 }
 
 function applyStyle(ctx, style) {
     for (let attrName in DEFAULT_STYLE) {
-        ctx[attrName] = DEFAULT_STYLE[attrName];
+        if (DEFAULT_STYLE[attrName] != null) {
+            if (attrName == 'dashed') {
+                ctx.setLineDash(DEFAULT_STYLE[attrName]);
+            }
+            ctx[attrName] = DEFAULT_STYLE[attrName];
+        }
     }
     for (let attrName in style) {
-        if (style[attrName] != null)
-        ctx[attrName] = style[attrName];
+        if (style[attrName] != null) {
+            if (attrName == 'dashed') {
+                ctx.setLineDash(style[attrName]);
+            }
+            ctx[attrName] = style[attrName];
+        }
+        
     }
 }
 
@@ -130,7 +148,6 @@ function renderGeometry(map, geometry, config) {
         }
     } 
     if (geometry._mercatorCoords == null || !Object.hasOwn(geometry, '_mercatorCoords')) {return;}
-    applyStyle(map.ctx, config.style);
 
     if (geometry.type === 'Polygon') {
         map.ctx.beginPath();
@@ -156,15 +173,42 @@ function renderGeometry(map, geometry, config) {
                 for (let [index, [x, y]] of ring.entries()) {
                     plotMercatorPoint(index, x, y, map);
                 }
-                
             }
         }
-
         if (config.renders.includes('fill')) {
             map.ctx.fill('evenodd');
         } else if (config.renders.includes('stroke')) {
             map.ctx.stroke();
         }
         map.ctx.closePath();
+    } else if (geometry.type === 'LineString') {
+        map.ctx.beginPath();
+        for (let [index, [x, y]] of geometry._mercatorCoords.entries()) {
+            plotMercatorPoint(index, x, y, map);
+        }
+        if (config.renders.includes('fill')) {
+            map.ctx.fill('evenodd');
+        } else if (config.renders.includes('stroke')) {
+            map.ctx.stroke();
+        }
+        map.ctx.closePath();
+    } else if (geometry.type === 'MultiLineString') {
+        map.ctx.beginPath();
+        
+        for (let [index, line] of geometry._mercatorCoords.entries()) {
+            if (!boundsIntersect(geometry._partBounds[index], map.getVisibleBounds())) {
+                continue;
+            }
+            for (let [index, [x, y]] of line.entries()) {
+                plotMercatorPoint(index, x, y, map);
+            }
+        }
+        if (config.renders.includes('fill')) {
+            map.ctx.fill('evenodd');
+        } else if (config.renders.includes('stroke')) {
+            map.ctx.stroke();
+        }
+        map.ctx.closePath();
+        
     }
 }
