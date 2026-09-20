@@ -1,4 +1,6 @@
 
+
+
 class ViewPort {
     constructor() {
         this.offsetX = 0;
@@ -14,26 +16,27 @@ class ViewPort {
 }
 
 class Map {
-    constructor(layers) {
+    constructor(canvas, layers) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.viewport = new ViewPort();
         this.layers = layers;
-
     }
 
-    project(lon, lat, viewport, canvas) {
-        const R = canvas.height / (2 * Math.PI);
+    project(lon, lat) {
+        const R = this.canvas.height / (2 * Math.PI);
         const clampedLat = clampLat(lat);
-
-        const x = (canvas.width / 2 + viewport.offsetX) + mercatorX(lon) * R * viewport.zoomScale;
-        const y = (canvas.height / 2 + viewport.offsetY) - mercatorY(clampedLat) * R * viewport.zoomScale;
+        const x = (this.canvas.width / 2 + this.viewport.offsetX) + mercatorX(lon) * R * this.viewport.zoomScale;
+        const y = (this.canvas.height / 2 + this.viewport.offsetY) - mercatorY(clampedLat) * R * this.viewport.zoomScale;
 
         return [x, y];
     }
 
-    unproject(x, y, viewport, canvas) {
-        const R = canvas.height / (2 * Math.PI);
+    unproject(x, y) {
+        const R = this.canvas.height / (2 * Math.PI);
 
-        const mx = (x - (canvas.width / 2 + viewport.offsetX)) / (R * viewport.zoomScale);
-        const my = -(y - (canvas.height / 2 + viewport.offsetY)) / (R * viewport.zoomScale);
+        const mx = (x - (this.canvas.width / 2 + this.viewport.offsetX)) / (R * this.viewport.zoomScale);
+        const my = -(y - (this.canvas.height / 2 + this.viewport.offsetY)) / (R * this.viewport.zoomScale);
 
         const lon = mx * 180 / Math.PI;
         const lat = (2 * Math.atan(Math.exp(my)) - Math.PI / 2) * 180 / Math.PI;
@@ -41,9 +44,9 @@ class Map {
         return [lon, lat];
     }
 
-    getVisibleBounds(viewport, canvas) {
-        const [lonMin, latMax] = unproject(0, 0, viewport, canvas);                         // top-left
-        const [lonMax, latMin] = unproject(canvas.width, canvas.height, viewport, canvas); // bottom-right
+    getVisibleBounds() {
+        const [lonMin, latMax] = unproject(0, 0);                         // top-left
+        const [lonMax, latMin] = unproject(this.canvas.width, this.canvas.height); // bottom-right
 
         return [
             lonMin,
@@ -52,22 +55,31 @@ class Map {
             latMax,
         ];
     }
-    
+
+    render() {
+        
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        for (let layer of this.layers) {
+            layer.render(this);
+        }
+    }
 }
 
 class Layer {
     constructor() {
-        this.ready = true;
+        this.ready = false;
     }
 
-    load() {
+    async load() {
         throw new Error("This method must be implemented in a subclass")
     }
 
-    render(viewport, ctx, map) {
+    render(map) {
         throw new Error("This method must be implemented in a subclass")
     }
 }
+
 
 class StaticLayer extends Layer {
     constructor() {
@@ -84,18 +96,69 @@ class RectLayer extends StaticLayer {
         
     }
 
-    load() {
+    async load() {
+        this.ready = true;
         return;
     }
 
-    render(viewport, canvas, ctx, map) {
+    render(map) {
+        
         const [x1, y1] = this.corner1;
         const [x2, y2] = this.corner2;
 
-        const [px1, py1] = map.project(x1, y1, viewport, canvas);
-        const [px2, py2] = map.project(x2, y2, viewport, canvas);
+        const [px1, py1] = map.project(x1, y1);
+        const [px2, py2] = map.project(x2, y2);
 
-        ctx.fillStyle = this.color;
-        ctx.fillRect(px1, py1, px2 - px1, py2 - py1, this.color);
+        map.ctx.fillStyle = this.color;
+        map.ctx.fillRect(px1, py1, px2 - px1, py2 - py1, this.color);
+    }
+}
+
+class SHPLayer extends Layer {
+    constructor(config) {
+        super();
+        this.config = config;
+        this.shps = []; // in order of size ascending
+    }
+
+    async load() {
+        const loadPromises = this.config.layers.map(entry => loadShapefile(entry.path));
+
+        this.shps = await Promise.all(loadPromises);
+        
+        this.ready = true;
+    }
+
+    getSizeIndex(zoomScale) {
+        if (zoomScale > 35) {
+            return 2;
+        } else if (zoomScale > 2.5) {
+            return 1;
+        } else {return 0;}
+    }
+
+    render(map) {
+        if (map == null) {return;}
+        const index = this.getSizeIndex(map.viewport.zoomScale);
+        for (let feature of this.shps[index].features) {
+            const geometry = feature.geometry;
+            switch (geometry.type) {
+                case 'Polygon':
+                    map.ctx.beginPath();
+                    map.ctx.fillStyle = "#6b8a71";
+                    for (let [index, [x, y]] of geometry.coordinates[0].entries()) {
+                        plotPoint(index, x, y, map);
+                    }
+                    if (this.config.renders.fill) {
+                        map.ctx.fill();
+                    } else if (this.config.renders.stroke) {
+                        map.ctx.stroke();
+                    }
+                    map.ctx.closePath();
+                    break;
+                default:
+                    break;
+            }
+        }
     }
 }

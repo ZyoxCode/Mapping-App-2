@@ -1,35 +1,37 @@
 const canvas = document.getElementById('map');
-const ctx = canvas.getContext('2d');
 canvas.width = document.documentElement.clientWidth;
 canvas.height = document.documentElement.clientHeight;
 
-let view = null;
 let redrawScheduled = false;
 
 const mapLayers = [
-    new RectLayer([-180, -90], [180, 90], '#5dbae6')
+    new RectLayer([-180, -90], [180, 90], '#5dbae6'),
+    new SHPLayer({
+        'renders': {
+            'fill': true,
+            'stroke': false
+        },
+        'layers': [
+            { 'path': 'ne_110m_land' },
+            { 'path': 'ne_50m_land' },
+            { 'path': 'ne_10m_land' },
+        ]
+    })
+
 ]
-view = new ViewPort();
 
-const map = new Map(mapLayers);
+const map = new Map(canvas, mapLayers);
 
-function renderLoop() {
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height, '#ffffff')
-    for (layer of map.layers) {
-        layer.render(view, canvas, ctx, map);
-    }
+for (let layer of map.layers) {
+    layer.load();
 }
+
 function requestRedraw() {
     if (redrawScheduled) return; // already requested
     redrawScheduled = true;
     requestAnimationFrame(() => {
-        renderLoop();
+        map.render();
         redrawScheduled = false;
     });
 }
-Promise.all(
-    Object.values(map.layers).map(obj => obj.ready)
-).then(() => {
-    requestRedraw();
-});
+Promise.all(map.layers.map(layer => layer.load())).then(requestRedraw);
