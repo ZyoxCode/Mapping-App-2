@@ -32,6 +32,14 @@ class Map {
         return [x, y];
     }
 
+    mercatorAdjust(x, y) {
+        const R = this.canvas.height / (2 * Math.PI);
+        const px = (this.canvas.width / 2 + this.viewport.offsetX) + x * R * this.viewport.zoomScale;
+        const py = (this.canvas.height / 2 + this.viewport.offsetY) - y * R * this.viewport.zoomScale;
+
+        return [px, py];
+    }
+
     unproject(x, y) {
         const R = this.canvas.height / (2 * Math.PI);
 
@@ -45,8 +53,8 @@ class Map {
     }
 
     getVisibleBounds() {
-        const [lonMin, latMax] = unproject(0, 0);                         // top-left
-        const [lonMax, latMin] = unproject(this.canvas.width, this.canvas.height); // bottom-right
+        const [lonMin, latMax] = this.unproject(0, 0);                         // top-left
+        const [lonMax, latMin] = this.unproject(this.canvas.width, this.canvas.height); // bottom-right
 
         return [
             lonMin,
@@ -117,47 +125,44 @@ class SHPLayer extends Layer {
     constructor(config) {
         super();
         this.config = config;
-        this.shps = []; // in order of size ascending
+        this.shps = {}; // in order of size ascending
     }
 
     async load() {
-        const loadPromises = this.config.layers.map(entry => loadShapefile(entry.path));
-
-        this.shps = await Promise.all(loadPromises);
+        const loadPromises = this.config.layers.map(entry =>  {
+            return loadShapefile(entry.path).then(geojson => {
+                for (const feature of geojson.features) {
+                    prepareGeometry(feature.geometry);
+                }
+                
+                this.shps[entry.size] = geojson;
+            });
+        });
         
-        this.ready = true;
+        this.ready = await Promise.all(loadPromises);
     }
 
     getSizeIndex(zoomScale) {
-        if (zoomScale > 35) {
+        if (zoomScale > 20) {
             return 2;
-        } else if (zoomScale > 2.5) {
+        } else if (zoomScale > 2) {
             return 1;
         } else {return 0;}
     }
 
     render(map) {
-        if (map == null) {return;}
+        if (map == null || !this.ready || !this.shps[this.getSizeIndex(map.viewport.zoomScale)]) {
+            return;
+        }
+        
         const index = this.getSizeIndex(map.viewport.zoomScale);
+        if (!Object.hasOwn(this.shps, index)) {
+            return;
+        }
         for (let feature of this.shps[index].features) {
+            
             const geometry = feature.geometry;
-            switch (geometry.type) {
-                case 'Polygon':
-                    map.ctx.beginPath();
-                    applyStyle(map.ctx, this.config.style);
-                    for (let [index, [x, y]] of geometry.coordinates[0].entries()) {
-                        plotPoint(index, x, y, map);
-                    }
-                    if (this.config.renders.includes('fill')) {
-                        map.ctx.fill();
-                    } else if (this.config.renders.includes('stroke')) {
-                        map.ctx.stroke();
-                    }
-                    map.ctx.closePath();
-                    break;
-                default:
-                    break;
-            }
+            renderGeometry(map, geometry, this.config);
         }
     }
 }
