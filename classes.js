@@ -53,15 +53,17 @@ class Map {
     }
 
     getVisibleBounds() {
-        const [lonMin, latMax] = this.unproject(0, 0);                         // top-left
-        const [lonMax, latMin] = this.unproject(this.canvas.width, this.canvas.height); // bottom-right
+        const R = this.canvas.height / (2 * Math.PI);
+        const scale = R * this.viewport.zoomScale;
 
-        return [
-            lonMin,
-            latMin,
-            lonMax,
-            latMax,
-        ];
+        const xMin = (0 - (this.canvas.width / 2 + this.viewport.offsetX)) / scale;
+        const xMax = (this.canvas.width - (this.canvas.width / 2 + this.viewport.offsetX)) / scale;
+        
+        // Canvas Y is inverted relative to Mercator Y
+        const yMax = -(0 - (this.canvas.height / 2 + this.viewport.offsetY)) / scale;
+        const yMin = -(this.canvas.height - (this.canvas.height / 2 + this.viewport.offsetY)) / scale;
+
+        return [xMin, yMin, xMax, yMax];
     }
 
     render() {
@@ -134,12 +136,12 @@ class SHPLayer extends Layer {
                 for (const feature of geojson.features) {
                     prepareGeometry(feature.geometry);
                 }
-                
                 this.shps[entry.size] = geojson;
             });
         });
         
-        this.ready = await Promise.all(loadPromises);
+        await Promise.all(loadPromises);
+        this.ready = true;
     }
 
     getSizeIndex(zoomScale) {
@@ -162,10 +164,35 @@ class SHPLayer extends Layer {
         for (let feature of this.shps[index].features) {
             
             const geometry = feature.geometry;
-            const style = this.config.style.styles[this.config.style.selector(feature.properties)];
+            const properties = feature.properties;
+            let style = null;
+            if (!Object.hasOwn(this.config, 'style')) {
+                style = DEFAULT_STYLE;
+            } else {
+                style = this.config.style.styles[this.config.style.selector(feature.properties)];
+            }
+
+            if (style == null) {
+                continue;
+            }
+
+            if (Object.hasOwn(this.config, 'visibilityRule')) {
+                if (!this.config.visibilityRule(properties, map.viewport)) {
+                    continue;
+                }
+            } 
 
             applyStyle(map.ctx, style);
-            renderGeometry(map, geometry, this.config);
+            if (this.config.renders.includes('fill') || this.config.renders.includes('stroke')) {
+                renderGeometry(map, geometry, this.config);
+            }
+
+            if (this.config.renders.includes('text') || Object.hasOwn(this.config, 'textRule')) {
+                const text = this.config.textRule(properties, map.viewport);
+                if (text !== null) {
+                    renderText(map, properties, text);
+                }
+            }
         }
     }
 }

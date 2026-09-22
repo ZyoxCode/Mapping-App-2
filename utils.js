@@ -62,29 +62,31 @@ function plotPoint(index, x, y, map) {
 }
 
 function computeBounds(coords) {
-    let lonMin = Infinity, lonMax = -Infinity, latMin = Infinity, latMax = -Infinity;
+    let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
 
-    for (const [lon, lat] of coords) {
-        lonMin = Math.min(lonMin, lon);
-        lonMax = Math.max(lonMax, lon);
-        latMin = Math.min(latMin, lat);
-        latMax = Math.max(latMax, lat);
+    for (const [x, y] of coords) {
+        xMin = Math.min(xMin, x);
+        xMax = Math.max(xMax, x);
+        yMin = Math.min(yMin, y);
+        yMax = Math.max(yMax, y);
     }
     
-    return [lonMin, latMin, lonMax, latMax];
+    return [xMin, yMin, xMax, yMax];
 }
 
 function computePartBounds(geometry) {
+
     if (geometry === null) {return null; }
+
     switch (geometry.type) {
         case 'LineString':
-            return [computeBounds(geometry.coordinates)];
+            return [computeBounds(geometry._mercatorCoords)];
         case 'Polygon':
-            return [computeBounds(geometry.coordinates[0])];
+            return [computeBounds(geometry._mercatorCoords[0])];
         case 'MultiLineString':
-            return geometry.coordinates.map(computeBounds);
+            return geometry._mercatorCoords.map(line => computeBounds(line));
         case 'MultiPolygon':
-            return geometry.coordinates.map(poly => computeBounds(poly[0]));
+            return geometry._mercatorCoords.map(poly => computeBounds(poly[0]));
         default:
             return null;
 
@@ -97,10 +99,8 @@ function lonLatToMercator(lon, lat) {
 }
 
 function prepareGeometry(geometry) {
-    const partBounds = computePartBounds(geometry);
     if (geometry == null) {return;}
-    geometry._partBounds = partBounds;
-
+    
     if (geometry.type === 'Polygon') {
         geometry._mercatorCoords = geometry.coordinates.map(ring =>
             ring.map(([lon, lat]) => lonLatToMercator(lon, lat))
@@ -118,97 +118,13 @@ function prepareGeometry(geometry) {
             line.map(([lon, lat]) => lonLatToMercator(lon, lat))
         );
     }
-}
 
-function applyStyle(ctx, style) {
-    for (let attrName in DEFAULT_STYLE) {
-        if (DEFAULT_STYLE[attrName] != null) {
-            if (attrName == 'dashed') {
-                ctx.setLineDash(DEFAULT_STYLE[attrName]);
-            }
-            ctx[attrName] = DEFAULT_STYLE[attrName];
-        }
+    if (geometry.bbox) {
+        const [minLon, minLat, maxLon, maxLat] = geometry.bbox;
+        const [xMin, yMin] = lonLatToMercator(minLon, minLat);
+        const [xMax, yMax] = lonLatToMercator(maxLon, maxLat);
+        geometry._mercatorBbox = [xMin, yMin, xMax, yMax];
     }
-    for (let attrName in style) {
-        if (style[attrName] != null) {
-            if (attrName == 'dashed') {
-                ctx.setLineDash(style[attrName]);
-            }
-            ctx[attrName] = style[attrName];
-        }
-        
-    }
-}
-
-function renderGeometry(map, geometry, config) {
     
-    if (Object.hasOwn(geometry, 'bbox')) {
-        if (!boundsIntersect(map.getVisibleBounds(), geometry.bbox)) {
-            return;
-        }
-    } 
-    if (geometry._mercatorCoords == null || !Object.hasOwn(geometry, '_mercatorCoords')) {return;}
-
-    if (geometry.type === 'Polygon') {
-        map.ctx.beginPath();
-        for (let ring of geometry._mercatorCoords) {
-            for (let [index, [x, y]] of ring.entries()) {
-                plotMercatorPoint(index, x, y, map);
-            }
-        }
-        if (config.renders.includes('fill')) {
-            map.ctx.fill('evenodd');
-        } else if (config.renders.includes('stroke')) {
-            map.ctx.stroke();
-        }
-        map.ctx.closePath();
-    } else if (geometry.type === 'MultiPolygon') {
-        map.ctx.beginPath();
-        for (let [index, poly] of geometry._mercatorCoords.entries()) {
-            if (!boundsIntersect(geometry._partBounds[index], map.getVisibleBounds())) {
-                continue;
-            }
-            for (let ring of poly) {
-                
-                for (let [index, [x, y]] of ring.entries()) {
-                    plotMercatorPoint(index, x, y, map);
-                }
-            }
-        }
-        if (config.renders.includes('fill')) {
-            map.ctx.fill('evenodd');
-        } else if (config.renders.includes('stroke')) {
-            map.ctx.stroke();
-        }
-        map.ctx.closePath();
-    } else if (geometry.type === 'LineString') {
-        map.ctx.beginPath();
-        for (let [index, [x, y]] of geometry._mercatorCoords.entries()) {
-            plotMercatorPoint(index, x, y, map);
-        }
-        if (config.renders.includes('fill')) {
-            map.ctx.fill('evenodd');
-        } else if (config.renders.includes('stroke')) {
-            map.ctx.stroke();
-        }
-        map.ctx.closePath();
-    } else if (geometry.type === 'MultiLineString') {
-        map.ctx.beginPath();
-        
-        for (let [index, line] of geometry._mercatorCoords.entries()) {
-            if (!boundsIntersect(geometry._partBounds[index], map.getVisibleBounds())) {
-                continue;
-            }
-            for (let [index, [x, y]] of line.entries()) {
-                plotMercatorPoint(index, x, y, map);
-            }
-        }
-        if (config.renders.includes('fill')) {
-            map.ctx.fill('evenodd');
-        } else if (config.renders.includes('stroke')) {
-            map.ctx.stroke();
-        }
-        map.ctx.closePath();
-        
-    }
+    geometry._partBounds = computePartBounds(geometry);
 }
