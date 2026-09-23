@@ -32,14 +32,25 @@ async function pathExists(url) {
     }
 }
 
-async function loadShapefile(name) {
-    const unzippedShp = toAbsoluteUrl('./data/' + name + '/' + name + '.shp');
+const _shapefileCache = {};
 
-    if (await pathExists(unzippedShp)) {
-        return shp(toAbsoluteUrl('./data/' + name + '/' + name));
+async function loadShapefile(name) {
+    if (_shapefileCache[name]) {
+        return _shapefileCache[name];
     }
 
-    return shp('./data/' + name + '.zip');
+    const promise = (async () => {
+        const unzippedShp = toAbsoluteUrl('./data/' + name + '/' + name + '.shp');
+
+        if (await pathExists(unzippedShp)) {
+            return shp(toAbsoluteUrl('./data/' + name + '/' + name));
+        }
+
+        return shp('./data/' + name + '.zip');
+    })();
+
+    _shapefileCache[name] = promise;
+    return promise;
 }
 
 function plotMercatorPoint(index, x, y, map) {
@@ -61,10 +72,10 @@ function plotPoint(index, x, y, map) {
     }
 }
 
-function computeBounds(coords) {
+function computeBounds(coords) { // (x, y) pairs
     let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
 
-    for (const [x, y] of coords) {
+    for (const [x, y] of coords) { // (x, y) pairs
         xMin = Math.min(xMin, x);
         xMax = Math.max(xMax, x);
         yMin = Math.min(yMin, y);
@@ -74,57 +85,119 @@ function computeBounds(coords) {
     return [xMin, yMin, xMax, yMax];
 }
 
-function computePartBounds(geometry) {
-
-    if (geometry === null) {return null; }
-
-    switch (geometry.type) {
-        case 'LineString':
-            return [computeBounds(geometry._mercatorCoords)];
-        case 'Polygon':
-            return [computeBounds(geometry._mercatorCoords[0])];
-        case 'MultiLineString':
-            return geometry._mercatorCoords.map(line => computeBounds(line));
-        case 'MultiPolygon':
-            return geometry._mercatorCoords.map(poly => computeBounds(poly[0]));
-        default:
-            return null;
-
-    }
-}
-
 function lonLatToMercator(lon, lat) {
-
     return [mercatorX(lon), mercatorY(clampLat(lat))];
 }
 
-function prepareGeometry(geometry) {
-    if (geometry == null) {return;}
-    
-    if (geometry.type === 'Polygon') {
-        geometry._mercatorCoords = geometry.coordinates.map(ring =>
-            ring.map(([lon, lat]) => lonLatToMercator(lon, lat))
-        );
-    } else if (geometry.type === 'MultiPolygon') {
-        geometry._mercatorCoords = geometry.coordinates.map(poly => 
-            poly.map(ring => ring.map(([lon, lat]) => lonLatToMercator(lon, lat)))
-        );
-    } else if (geometry.type === 'LineString') {
-        geometry._mercatorCoords = geometry.coordinates.map(([lon, lat]) => 
-            lonLatToMercator(lon, lat)
-       );
-    } else if (geometry.type === 'MultiLineString') {
-        geometry._mercatorCoords = geometry.coordinates.map((line) => 
-            line.map(([lon, lat]) => lonLatToMercator(lon, lat))
-        );
-    }
+function updateBounds(bounds, x, y) {
+    bounds[0] = Math.min(bounds[0], x);
+    bounds[1] = Math.min(bounds[1], y);
+    bounds[2] = Math.max(bounds[2], x);
+    bounds[3] = Math.max(bounds[3], y);
+}
 
-    if (geometry.bbox) {
-        const [minLon, minLat, maxLon, maxLat] = geometry.bbox;
-        const [xMin, yMin] = lonLatToMercator(minLon, minLat);
-        const [xMax, yMax] = lonLatToMercator(maxLon, maxLat);
-        geometry._mercatorBbox = [xMin, yMin, xMax, yMax];
+function processRing(ringCoords, path, bounds) {
+    for (let i = 0; i < ringCoords.length; i++) {
+        const [lon, lat] = ringCoords[i];
+        const [x, y] = lonLatToMercator(lon, lat);
+
+        if (bounds) {
+            updateBounds(bounds, x, y);
+        }
+
+        if (path) {
+            if (i === 0) {
+                path.moveTo(x, y);
+            } else {
+                path.lineTo(x, y);
+            }
+        }
     }
-    
-    geometry._partBounds = computePartBounds(geometry);
+}
+
+function prepareGeometry(geometry) {
+    if (geometry == null) return;
+
+    geometry._partBounds = [];
+
+    switch (geometry.type) {
+        case 'LineString': {
+            const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+            const path = new Path2D();
+
+            processRing(geometry.coordinates, path, bounds);
+
+            geometry._path = path;
+            geometry._partBounds.push(bounds);
+            geometry._mercatorBbox = bounds;
+            break;
+        }
+
+        case 'Polygon': {
+            const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+            const path = new Path2D();
+
+            processRing(geometry.coordinates[0], path, bounds);
+            path.closePath();
+
+            for (let i = 1; i < geometry.coordinates.length; i++) {
+                processRing(geometry.coordinates[i], path, null);
+                path.closePath();
+            }
+
+            geometry._path = path;
+            geometry._partBounds.push(bounds);
+            geometry._mercatorBbox = bounds;
+            break;
+        }
+
+        case 'MultiLineString': {
+            geometry._path = [];
+            const globalBounds = [Infinity, Infinity, -Infinity, -Infinity];
+
+            for (let i = 0; i < geometry.coordinates.length; i++) {
+                const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+                const path = new Path2D();
+
+                processRing(geometry.coordinates[i], path, bounds);
+
+                geometry._path.push(path);
+                geometry._partBounds.push(bounds);
+
+                updateBounds(globalBounds, bounds[0], bounds[1]);
+                updateBounds(globalBounds, bounds[2], bounds[3]);
+            }
+
+            geometry._mercatorBbox = globalBounds;
+            break;
+        }
+
+        case 'MultiPolygon': {
+            geometry._path = [];
+            const globalBounds = [Infinity, Infinity, -Infinity, -Infinity];
+
+            for (let i = 0; i < geometry.coordinates.length; i++) {
+                const poly = geometry.coordinates[i];
+                const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+                const path = new Path2D();
+
+                processRing(poly[0], path, bounds);
+                path.closePath();
+
+                for (let j = 1; j < poly.length; j++) {
+                    processRing(poly[j], path, null);
+                    path.closePath();
+                }
+
+                geometry._path.push(path);
+                geometry._partBounds.push(bounds);
+
+                updateBounds(globalBounds, bounds[0], bounds[1]);
+                updateBounds(globalBounds, bounds[2], bounds[3]);
+            }
+
+            geometry._mercatorBbox = globalBounds;
+            break;
+        }
+    }
 }

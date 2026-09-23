@@ -1,6 +1,3 @@
-
-
-
 class ViewPort {
     constructor() {
         this.offsetX = 0;
@@ -14,11 +11,10 @@ class ViewPort {
         this.isDragging = false;
     }
 }
-
 class Map {
     constructor(canvas, layers) {
         this.canvas = canvas;
-        this.ctx = canvas.getContext('2d');
+        this.ctx = canvas.getContext('2d', {'alpha': false, 'desynchronized': true});
         this.viewport = new ViewPort();
         this.layers = layers;
     }
@@ -59,7 +55,6 @@ class Map {
         const xMin = (0 - (this.canvas.width / 2 + this.viewport.offsetX)) / scale;
         const xMax = (this.canvas.width - (this.canvas.width / 2 + this.viewport.offsetX)) / scale;
         
-        // Canvas Y is inverted relative to Mercator Y
         const yMax = -(0 - (this.canvas.height / 2 + this.viewport.offsetY)) / scale;
         const yMin = -(this.canvas.height - (this.canvas.height / 2 + this.viewport.offsetY)) / scale;
 
@@ -67,11 +62,30 @@ class Map {
     }
 
     render() {
+        currentStyle = null;
+
+        // Clear canvas background in screen coordinates
+        this.ctx.setTransform(1, 0, 0, 1, 0, 0);
         this.ctx.fillStyle = '#ffffff';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        this._visibleBounds = this.getVisibleBounds();
+
+        // Calculate view matrix once
+        const R = this.canvas.height / (2 * Math.PI);
+        const scale = R * this.viewport.zoomScale;
+        const translateX = this.canvas.width / 2 + this.viewport.offsetX;
+        const translateY = this.canvas.height / 2 + this.viewport.offsetY;
+
+        // Apply global transform for Mercator geometry layers
+        this.ctx.setTransform(scale, 0, 0, -scale, translateX, translateY);
+
         for (let layer of this.layers) {
             layer.render(this);
         }
+
+        // Restore screen coordinate space
+        this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
 }
 
@@ -89,7 +103,6 @@ class Layer {
     }
 }
 
-
 class StaticLayer extends Layer {
     constructor() {
         super();
@@ -101,25 +114,46 @@ class RectLayer extends StaticLayer {
         super();
         this.corner1 = corner1;
         this.corner2 = corner2;
-        this.color = color;  
+        this.color = color;
         
+        this._mercatorBbox = null;
+        this._x = 0;
+        this._y = 0;
+        this._width = 0;
+        this._height = 0;
     }
 
     async load() {
+        const [lon1, lat1] = this.corner1;
+        const [lon2, lat2] = this.corner2;
+
+        const [x1, y1] = lonLatToMercator(lon1, lat1);
+        const [x2, y2] = lonLatToMercator(lon2, lat2);
+
+        const xMin = Math.min(x1, x2);
+        const xMax = Math.max(x1, x2);
+        const yMin = Math.min(y1, y2);
+        const yMax = Math.max(y1, y2);
+
+        this._mercatorBbox = [xMin, yMin, xMax, yMax];
+        
+        this._x = xMin;
+        this._y = yMin;
+        this._width = xMax - xMin;
+        this._height = yMax - yMin;
+
         this.ready = true;
-        return;
     }
 
     render(map) {
-        
-        const [x1, y1] = this.corner1;
-        const [x2, y2] = this.corner2;
+        if (!this.ready) return;
 
-        const [px1, py1] = map.project(x1, y1);
-        const [px2, py2] = map.project(x2, y2);
+        if (!boundsIntersect(map._visibleBounds || map.getVisibleBounds(), this._mercatorBbox)) {
+            return;
+        }
 
         map.ctx.fillStyle = this.color;
-        map.ctx.fillRect(px1, py1, px2 - px1, py2 - py1, this.color);
+        map.ctx.fillRect(this._x, this._y, this._width, this._height);
     }
 }
 
@@ -127,7 +161,7 @@ class SHPLayer extends Layer {
     constructor(config) {
         super();
         this.config = config;
-        this.shps = {}; // in order of size ascending
+        this.shps = {};
     }
 
     async load() {
@@ -149,7 +183,7 @@ class SHPLayer extends Layer {
             return 2;
         } else if (zoomScale > 2) {
             return 1;
-        } else {return 0;}
+        } else { return 0; }
     }
 
     render(map) {
@@ -161,20 +195,24 @@ class SHPLayer extends Layer {
         if (!Object.hasOwn(this.shps, index)) {
             return;
         }
-        for (let feature of this.shps[index].features) {
-            
-            const geometry = feature.geometry;
-            const properties = feature.properties;
-            let style = null;
-            if (!Object.hasOwn(this.config, 'style')) {
-                style = DEFAULT_STYLE;
-            } else {
-                style = this.config.style.styles[this.config.style.selector(feature.properties)];
-            }
 
-            if (style == null) {
+        const visibleBounds = map._visibleBounds || map.getVisibleBounds();
+        const R = map.canvas.height / (2 * Math.PI);
+        const currentScale = R * map.viewport.zoomScale;
+
+        for (let feature of this.shps[index].features) {
+            const geometry = feature.geometry;
+
+            if (geometry && geometry._mercatorBbox && !boundsIntersect(visibleBounds, geometry._mercatorBbox)) {
                 continue;
             }
+
+            const properties = feature.properties;
+            let style = !Object.hasOwn(this.config, 'style')
+                ? DEFAULT_STYLE
+                : this.config.style.styles[this.config.style.selector(feature.properties)];
+
+            if (!style) continue;
 
             if (Object.hasOwn(this.config, 'visibilityRule')) {
                 if (!this.config.visibilityRule(properties, map.viewport)) {
@@ -182,15 +220,24 @@ class SHPLayer extends Layer {
                 }
             } 
 
-            applyStyle(map.ctx, style);
+            // Render geometry using scale-adjusted stroke width
             if (this.config.renders.includes('fill') || this.config.renders.includes('stroke')) {
+                applyStyle(map.ctx, style, currentScale);
                 renderGeometry(map, geometry, this.config);
             }
 
+            // Render text in 1:1 pixel coordinate space
             if (this.config.renders.includes('text') || Object.hasOwn(this.config, 'textRule')) {
-                const text = this.config.textRule(properties, map.viewport);
+                const text = this.config.textRule ? this.config.textRule(properties, map.viewport) : null;
                 if (text !== null) {
+                    map.ctx.save();
+                    map.ctx.setTransform(1, 0, 0, 1, 0, 0);
+                    currentStyle = null; // Force style re-application for pixel-space text
+                    applyStyle(map.ctx, style, 1);
+                    map.ctx.font = style.font || DEFAULT_STYLE.font;
+                    map.ctx.textAlign = style.textAlign || DEFAULT_STYLE.textAlign;
                     renderText(map, properties, text);
+                    map.ctx.restore();
                 }
             }
         }
@@ -198,7 +245,7 @@ class SHPLayer extends Layer {
 }
 
 class StyleRule {
-    constructor(styles, selector=(properties) => {return 0;}) {
+    constructor(styles, selector=(properties) => { return 0; }) {
         this.styles = styles;
         this.selector = selector;
     }

@@ -4,7 +4,8 @@ body {
     padding: 0;
 }
 canvas {
-    display:flex;
+    display: flex;
     width: 100vw;
     height: 100vh;
+    touch-action: none; /* Prevents Chrome browser gesture lock delays */
 }

@@ -1,8 +1,4 @@
 const canvas = document.getElementById('map');
-canvas.width = document.documentElement.clientWidth;
-canvas.height = document.documentElement.clientHeight;
-
-let redrawScheduled = true;
 
 const mapLayers = [
     new RectLayer(
@@ -21,7 +17,6 @@ const mapLayers = [
             'strokeStyle': null,
             'fillStyle': '#c4e6b0',
         }])
-
     }),
     new SHPLayer({
         'renders': ['fill'],
@@ -32,7 +27,6 @@ const mapLayers = [
             'strokeStyle': null,
             'fillStyle': '#c4e6b0',
         }])
-
     }),
     new SHPLayer({
         'renders': ['fill'],
@@ -45,7 +39,6 @@ const mapLayers = [
             'strokeStyle': null,
             'fillStyle': '#e7e7e7',
         }])
-
     }),
     new SHPLayer({
         'renders': ['fill'],
@@ -83,19 +76,14 @@ const mapLayers = [
             (properties) => {
                 switch (properties.FEATURECLA) {
                     case 'International boundary (verify)':
-                        return 0;
-                        break;
                     case 'Indefinite (please verify)':
                         return 0;
-                        break;
                     default:
                         return 1;
-                        break;
                 }
             }
         )
     }),
-
     new SHPLayer({
         'renders': ['text'],
         'layers': [
@@ -121,7 +109,6 @@ const mapLayers = [
             } else {
                 return properties.ABBREV;
             }
-            
         }
     }),
     new SHPLayer({
@@ -145,43 +132,136 @@ const mapLayers = [
                     'dashed': [5, 5]
                 }
             ],
-            (properties) => {
-                if (properties.scalerank < 2) {
-                    return 0;
-                } else {
-                    return 1;
-                }
-            }
+            (properties) => properties.scalerank < 2 ? 0 : 1
         ),
-        'visibilityRule': (properties, viewport) => {
-            if (viewport.zoomScale > properties.scalerank) {
-                return true;
-            } else {
-                return false;
-            }
-        }
+        'visibilityRule': (properties, viewport) => viewport.zoomScale > properties.scalerank
     }),
+];
 
-]
+function updateCanvasSize() {
+    canvas.width = document.documentElement.clientWidth;
+    canvas.height = document.documentElement.clientHeight;
+}
+updateCanvasSize();
+
 
 const map = new Map(canvas, mapLayers);
 
-function requestRedraw() {
-    redrawScheduled = true;
-}
+// --- Smooth Interpolation State ---
+let targetX = 0;
+let targetY = 0;
+let targetZoom = 1;
+
+let currentX = 0;
+let currentY = 0;
+let currentZoom = 1;
+
+let canvasRect = canvas.getBoundingClientRect();
+let isAnimating = false;
+
+window.addEventListener('resize', () => {
+    updateCanvasSize();
+    canvasRect = canvas.getBoundingClientRect();
+    map.render();
+}, { passive: true });
+
 function startLoop() {
-    function loop() {
-        if (redrawScheduled) {
-            map.render();
-            redrawScheduled = false;
-        }
-        requestAnimationFrame(loop);
+    if (!isAnimating) {
+        isAnimating = true;
+        requestAnimationFrame(animationLoop);
     }
-    requestAnimationFrame(loop);
 }
+
+function animationLoop() {
+    // Interpolation factor (0.3 = immediate, highly responsive feel)
+    const ease = 0.3;
+
+    const dx = targetX - currentX;
+    const dy = targetY - currentY;
+    const dz = targetZoom - currentZoom;
+
+    // Check if movement is still occurring
+    const isMoving = Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01 || Math.abs(dz) > 0.0001;
+
+    if (isMoving) {
+        currentX += dx * ease;
+        currentY += dy * ease;
+        currentZoom += dz * ease;
+
+        map.viewport.offsetX = currentX;
+        map.viewport.offsetY = currentY;
+        map.viewport.zoomScale = currentZoom;
+
+        map.render();
+        requestAnimationFrame(animationLoop);
+    } else {
+        // Snap to exact target position on final frame
+        currentX = targetX;
+        currentY = targetY;
+        currentZoom = targetZoom;
+
+        map.viewport.offsetX = currentX;
+        map.viewport.offsetY = currentY;
+        map.viewport.zoomScale = currentZoom;
+
+        map.render();
+        isAnimating = false;
+    }
+}
+
+// --- Event Handlers ---
+canvas.addEventListener('pointerdown', (e) => {
+    map.viewport.isDragging = true;
+    map.viewport.lastX = e.clientX;
+    map.viewport.lastY = e.clientY;
+    canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener('pointermove', (e) => {
+    if (!map.viewport.isDragging) return;
+
+    targetX += (e.clientX - map.viewport.lastX);
+    targetY += (e.clientY - map.viewport.lastY);
+    map.viewport.lastX = e.clientX;
+    map.viewport.lastY = e.clientY;
+
+    startLoop();
+}, { passive: true });
+
+const stopDrag = (e) => {
+    if (map.viewport.isDragging) {
+        map.viewport.isDragging = false;
+        if (e.pointerId) canvas.releasePointerCapture(e.pointerId);
+    }
+};
+
+canvas.addEventListener('pointerup', stopDrag);
+canvas.addEventListener('pointercancel', stopDrag);
+
+canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+
+    const mouseX = e.clientX - canvasRect.left;
+    const mouseY = e.clientY - canvasRect.top;
+    const cx = map.canvas.width / 2;
+    const cy = map.canvas.height / 2;
+
+    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+    const dx = mouseX - cx;
+    const dy = mouseY - cy;
+
+    targetX = dx - (dx - targetX) * zoomFactor;
+    targetY = dy - (dy - targetY) * zoomFactor;
+    targetZoom *= zoomFactor;
+
+    startLoop();
+}, { passive: false });
 
 document.fonts.ready.then(() => {
     Promise.all(map.layers.map(layer => layer.load())).then(() => {
-        startLoop()
+        currentX = targetX = map.viewport.offsetX;
+        currentY = targetY = map.viewport.offsetY;
+        currentZoom = targetZoom = map.viewport.zoomScale;
+        map.render();
     });
 });
