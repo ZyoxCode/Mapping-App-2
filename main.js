@@ -1,4 +1,6 @@
 const canvas = document.getElementById('map');
+let canvasRect = canvas.getBoundingClientRect();
+const pageStartTime = performance.now();
 
 const mapLayers = [
     new RectLayer(
@@ -84,12 +86,94 @@ const mapLayers = [
             }
         )
     }),
+    new LineLayer({
+        'layers': [
+            {
+                'properties': {
+                    'name': 'Equator',
+                    'scaleRank': 0,
+                    'styleIndex': 0,
+                },
+                'geometry': {
+                    'coordinates': [
+                        [-180, 0], 
+                        [180, 0]
+                    ]
+                }
+            },
+            {
+                'properties': {
+                    'name': 'Tropic of Cancer',
+                    'scaleRank': 2,
+                    'styleIndex': 1,
+                },
+                'geometry': {
+                    'coordinates': [
+                        [-180, 23.4], 
+                        [180, 23.4]
+                    ]
+                }
+            },
+            {
+                'properties': {
+                    'name': 'Tropic of Capricorn',
+                    'scaleRank': 2,
+                    'styleIndex': 1,
+                },
+                'geometry': {
+                    'coordinates': [
+                        [-180, -23.4], 
+                        [180, -23.4]
+                    ]
+                }
+            },
+            {
+                'properties': {
+                    'name': 'Arctic Circle',
+                    'scaleRank': 2,
+                    'styleIndex': 1,
+                },
+                'geometry': {
+                    'coordinates': [
+                        [-180, 66.5], 
+                        [180, 66.5]
+                    ]
+                }
+            },
+            {
+                'properties': {
+                    'name': 'Antarctic Circle',
+                    'scaleRank': 2,
+                    'styleIndex': 1,
+                },
+                'geometry': {
+                    'coordinates': [
+                        [-180, -66.5], 
+                        [180, -66.5]
+                    ]
+                }
+            }
+        ],
+        'styles': [
+            {
+                'strokeStyle': '#3d3d3d',
+                'lineWidth': 0.4,
+                'fillStyle': null,
+            },
+            {
+                'strokeStyle': '#3d3d3d',
+                'lineWidth': 0.2,
+                'fillStyle': null,
+                'dashed': [5, 5]
+            }
+
+        ],
+        'visibilityRule': (properties, viewport) => viewport.zoomScale > properties.scaleRank
+    }),
     new SHPLayer({
         'renders': ['text'],
         'layers': [
             {'path': 'ne_50m_admin_0_countries', 'size': 0},
-            {'path': 'ne_50m_admin_0_countries', 'size': 1},
-            {'path': 'ne_50m_admin_0_countries', 'size': 2},
         ],
         'style': new StyleRule(
             [{
@@ -109,32 +193,10 @@ const mapLayers = [
             } else {
                 return properties.ABBREV;
             }
+        },
+        'scaleFunction': (layer, scale) => {
+            return layer.shps[0];
         }
-    }),
-    new SHPLayer({
-        'renders': ['stroke'],
-        'layers': [
-            { 'path': 'ne_110m_geographic_lines', 'size': 0},
-            { 'path': 'ne_110m_geographic_lines', 'size': 1},
-            { 'path': 'ne_110m_geographic_lines', 'size': 2},
-        ],
-        'style': new StyleRule(
-            [
-                {
-                    'strokeStyle': '#3d3d3d',
-                    'lineWidth': 0.4,
-                    'fillStyle': null,
-                },
-                {
-                    'strokeStyle': '#3d3d3d',
-                    'lineWidth': 0.2,
-                    'fillStyle': null,
-                    'dashed': [5, 5]
-                }
-            ],
-            (properties) => properties.scalerank < 2 ? 0 : 1
-        ),
-        'visibilityRule': (properties, viewport) => viewport.zoomScale > properties.scalerank
     }),
 ];
 
@@ -147,91 +209,55 @@ updateCanvasSize();
 
 const map = new Map(canvas, mapLayers);
 
-// --- Smooth Interpolation State ---
-let targetX = 0;
-let targetY = 0;
-let targetZoom = 1;
-
-let currentX = 0;
-let currentY = 0;
-let currentZoom = 1;
-
-let canvasRect = canvas.getBoundingClientRect();
+// 3. Simple Render Loop & Demand Trigger
 let isAnimating = false;
 
-window.addEventListener('resize', () => {
-    updateCanvasSize();
-    canvasRect = canvas.getBoundingClientRect();
-    map.render();
-}, { passive: true });
-
-function startLoop() {
+function markNeedsRender() {
     if (!isAnimating) {
         isAnimating = true;
-        requestAnimationFrame(animationLoop);
+        requestAnimationFrame(renderLoop);
     }
 }
 
-function animationLoop() {
-    // Interpolation factor (0.3 = immediate, highly responsive feel)
-    const ease = 0.3;
+function renderLoop() {
+    map.render();
 
-    const dx = targetX - currentX;
-    const dy = targetY - currentY;
-    const dz = targetZoom - currentZoom;
-
-    // Check if movement is still occurring
-    const isMoving = Math.abs(dx) > 0.01 || Math.abs(dy) > 0.01 || Math.abs(dz) > 0.0001;
-
-    if (isMoving) {
-        currentX += dx * ease;
-        currentY += dy * ease;
-        currentZoom += dz * ease;
-
-        map.viewport.offsetX = currentX;
-        map.viewport.offsetY = currentY;
-        map.viewport.zoomScale = currentZoom;
-
-        map.render();
-        requestAnimationFrame(animationLoop);
+    // Keep loop active while dragging so mouse updates paint on VSync ticks
+    if (map.viewport.isDragging) {
+        requestAnimationFrame(renderLoop);
     } else {
-        // Snap to exact target position on final frame
-        currentX = targetX;
-        currentY = targetY;
-        currentZoom = targetZoom;
-
-        map.viewport.offsetX = currentX;
-        map.viewport.offsetY = currentY;
-        map.viewport.zoomScale = currentZoom;
-
-        map.render();
         isAnimating = false;
     }
 }
 
-// --- Event Handlers ---
+// 4. Event Listeners
+window.addEventListener('resize', () => {
+    updateCanvasSize();
+    markNeedsRender();
+}, { passive: true });
+
 canvas.addEventListener('pointerdown', (e) => {
     map.viewport.isDragging = true;
     map.viewport.lastX = e.clientX;
     map.viewport.lastY = e.clientY;
     canvas.setPointerCapture(e.pointerId);
+    markNeedsRender();
 });
 
 canvas.addEventListener('pointermove', (e) => {
     if (!map.viewport.isDragging) return;
 
-    targetX += (e.clientX - map.viewport.lastX);
-    targetY += (e.clientY - map.viewport.lastY);
+    map.viewport.offsetX += (e.clientX - map.viewport.lastX);
+    map.viewport.offsetY += (e.clientY - map.viewport.lastY);
     map.viewport.lastX = e.clientX;
     map.viewport.lastY = e.clientY;
-
-    startLoop();
 }, { passive: true });
 
 const stopDrag = (e) => {
     if (map.viewport.isDragging) {
         map.viewport.isDragging = false;
         if (e.pointerId) canvas.releasePointerCapture(e.pointerId);
+        markNeedsRender();
     }
 };
 
@@ -246,22 +272,34 @@ canvas.addEventListener('wheel', (e) => {
     const cx = map.canvas.width / 2;
     const cy = map.canvas.height / 2;
 
-    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
+    const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
     const dx = mouseX - cx;
     const dy = mouseY - cy;
 
-    targetX = dx - (dx - targetX) * zoomFactor;
-    targetY = dy - (dy - targetY) * zoomFactor;
-    targetZoom *= zoomFactor;
+    map.viewport.offsetX = dx - (dx - map.viewport.offsetX) * zoomFactor;
+    map.viewport.offsetY = dy - (dy - map.viewport.offsetY) * zoomFactor;
+    map.viewport.zoomScale *= zoomFactor;
 
-    startLoop();
+    markNeedsRender();
 }, { passive: false });
 
+// 5. Initial Load & Paint
+const layerLoadPromises = map.layers.map((layer) => {
+    return layer.load().then(() => {
+        // Trigger a render immediately as each individual layer finishes loading
+        markNeedsRender();
+    });
+});
+
+// Measure time until the complete map (all layers + fonts) has rendered
 document.fonts.ready.then(() => {
-    Promise.all(map.layers.map(layer => layer.load())).then(() => {
-        currentX = targetX = map.viewport.offsetX;
-        currentY = targetY = map.viewport.offsetY;
-        currentZoom = targetZoom = map.viewport.zoomScale;
-        map.render();
+    Promise.all(layerLoadPromises).then(() => {
+        // Wait until Chrome finishes painting the final complete layer frame
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                const totalTime = performance.now() - pageStartTime;
+                console.log(`All layers loaded and rendered in: ${totalTime.toFixed(2)} ms`);
+            });
+        });
     });
 });

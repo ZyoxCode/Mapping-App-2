@@ -1,43 +1,24 @@
-function applyStyle(ctx, style) {
+function applyStyle(ctx, style, scale) {
     const mergedStyle = Object.assign({}, DEFAULT_STYLE, style);
     
+    if (Array.isArray(mergedStyle.dashed) && mergedStyle.dashed.length > 0) {
+        const scaledDash = mergedStyle.dashed.map(dashLength => dashLength / scale);
+        ctx.setLineDash(scaledDash);
+    } else {
+        ctx.setLineDash([]);
+    }
+
     for (let attrName in mergedStyle) {
         if (mergedStyle[attrName] != null) {
             if (attrName === 'dashed') {
-                ctx.setLineDash(mergedStyle[attrName]);
+                continue;
+            } else if (attrName === 'lineWidth') {
+                ctx[attrName] = mergedStyle[attrName] / scale;
             } else {
                 ctx[attrName] = mergedStyle[attrName];
             }
         }
     }
-}
-    
-
-// Cache to track current canvas state and avoid redundant context sets
-let currentStyle = null;
-
-function applyStyle(ctx, style, currentScale = 1) {
-    if (style === currentStyle) return;
-    currentStyle = style;
-
-    const fillStyle = style.fillStyle ?? DEFAULT_STYLE.fillStyle;
-    const strokeStyle = style.strokeStyle ?? DEFAULT_STYLE.strokeStyle;
-    const rawLineWidth = style.lineWidth ?? DEFAULT_STYLE.lineWidth;
-    const dashed = style.dashed ?? DEFAULT_STYLE.dashed;
-
-    if (fillStyle !== null && ctx.fillStyle !== fillStyle) {
-        ctx.fillStyle = fillStyle;
-    }
-    if (strokeStyle !== null && ctx.strokeStyle !== strokeStyle) {
-        ctx.strokeStyle = strokeStyle;
-    }
-
-    // Scale pixel line width down into Mercator world space
-    if (rawLineWidth !== null) {
-        ctx.lineWidth = rawLineWidth / currentScale;
-    }
-
-    ctx.setLineDash(dashed || []);
 }
 
 function renderGeometry(map, geometry, config) {

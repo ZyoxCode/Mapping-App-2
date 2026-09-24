@@ -62,7 +62,6 @@ class Map {
     }
 
     render() {
-        currentStyle = null;
 
         // Clear canvas background in screen coordinates
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -106,6 +105,72 @@ class Layer {
 class StaticLayer extends Layer {
     constructor() {
         super();
+    }
+}
+
+class LineLayer extends StaticLayer {
+    constructor(config) {
+        super();
+        
+        this.config = config;
+    }
+
+    async load() {
+        for (const [index, layer] of this.config.layers.entries()) {
+            const geometry = layer.geometry;
+            const path = new Path2D();
+            
+            let xMin = Infinity;
+            let xMax = -Infinity;
+            let yMin = Infinity;
+            let yMax = -Infinity;
+
+            for (const [index, [lon, lat]] of geometry.coordinates.entries()) {
+                const [x, y] = lonLatToMercator(lon, lat);
+
+                xMin = Math.min(xMin, x);
+                xMax = Math.max(xMax, x);
+                yMin = Math.min(yMin, y);
+                yMax = Math.max(yMax, y);
+
+                if (index == 0) {
+                    path.moveTo(x, y);
+                } else {
+                    path.lineTo(x, y);
+                }
+                
+            }
+            this.config.layers[index].geometry._path = path;
+            this.config.layers[index].geometry._partBounds = [xMin, yMin, xMax, yMax];
+        }
+
+        this.ready = true;
+
+    }
+    
+    render(map) {
+        const R = map.canvas.height / (2 * Math.PI);
+        const scale = R * map.viewport.zoomScale;
+
+        if (!this.ready) return;
+
+        for (let layer of this.config.layers) {
+            
+            const geometry = layer.geometry;
+            const properties = layer.properties;
+
+            if (Object.hasOwn(this.config, 'visibilityRule')) {
+                if (!this.config.visibilityRule(properties, map.viewport)) {
+                    continue;
+                }
+            } 
+            
+            if (!boundsIntersect(map._visibleBounds || map.getVisibleBounds(), geometry._partBounds)) {
+                continue;
+            }
+            applyStyle(map.ctx, this.config.styles[properties.styleIndex], scale);
+            map.ctx.stroke(geometry._path);
+        }
     }
 }
 
@@ -167,23 +232,25 @@ class SHPLayer extends Layer {
     async load() {
         const loadPromises = this.config.layers.map(entry =>  {
             return loadShapefile(entry.path).then(geojson => {
+
                 for (const feature of geojson.features) {
+
                     prepareGeometry(feature.geometry);
                 }
-                this.shps[entry.size] = geojson;
+                if (Array.isArray(entry.size)) {
+                    for (let size of entry.size) {
+                        this.shps[size] = geojson;
+                    }
+                } else {
+                    this.shps[entry.size] = geojson;
+                }
+                
             });
         });
         
         await Promise.all(loadPromises);
         this.ready = true;
-    }
-
-    getSizeIndex(zoomScale) {
-        if (zoomScale > 20) {
-            return 2;
-        } else if (zoomScale > 2) {
-            return 1;
-        } else { return 0; }
+        
     }
 
     render(map) {
@@ -220,19 +287,16 @@ class SHPLayer extends Layer {
                 }
             } 
 
-            // Render geometry using scale-adjusted stroke width
             if (this.config.renders.includes('fill') || this.config.renders.includes('stroke')) {
                 applyStyle(map.ctx, style, currentScale);
                 renderGeometry(map, geometry, this.config);
             }
 
-            // Render text in 1:1 pixel coordinate space
             if (this.config.renders.includes('text') || Object.hasOwn(this.config, 'textRule')) {
                 const text = this.config.textRule ? this.config.textRule(properties, map.viewport) : null;
                 if (text !== null) {
                     map.ctx.save();
                     map.ctx.setTransform(1, 0, 0, 1, 0, 0);
-                    currentStyle = null; // Force style re-application for pixel-space text
                     applyStyle(map.ctx, style, 1);
                     map.ctx.font = style.font || DEFAULT_STYLE.font;
                     map.ctx.textAlign = style.textAlign || DEFAULT_STYLE.textAlign;
