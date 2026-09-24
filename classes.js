@@ -17,6 +17,7 @@ class Map {
         this.ctx = canvas.getContext('2d', {'alpha': false, 'desynchronized': true});
         this.viewport = new ViewPort();
         this.layers = layers;
+        this.labelQueue = [];
     }
 
     project(lon, lat) {
@@ -62,7 +63,7 @@ class Map {
     }
 
     render() {
-
+        this.labelQueue = [];
         // Clear canvas background in screen coordinates
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
         this.ctx.fillStyle = '#ffffff';
@@ -82,9 +83,91 @@ class Map {
         for (let layer of this.layers) {
             layer.render(this);
         }
-
-        // Restore screen coordinate space
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+        this.renderLabels();
+        // Restore screen coordinate space
+        
+        
+    }
+
+    renderLabels() {
+        
+        if (this.labelQueue.length === 0) return;
+        console.log(this.labelQueue);
+
+        // 1. Sort queue by priority
+        this.labelQueue.sort((a, b) => {
+            if (a.scaleRank !== b.scaleRank) return a.scaleRank - b.scaleRank;
+            if (a.labelRank !== b.labelRank) return a.labelRank - b.labelRank;
+            return a.text.length - b.text.length;
+        });
+
+        const placedBoxes = [];
+        const R = this.canvas.height / (2 * Math.PI);
+        const scale = R * this.viewport.zoomScale;
+        const translateX = this.canvas.width / 2 + this.viewport.offsetX;
+        const translateY = this.canvas.height / 2 + this.viewport.offsetY;
+
+        for (let label of this.labelQueue) {
+            // --- STEP A: CONVERT LON/LAT TO MERCATOR ---
+            // (Skip lonLatToMercator if label.coords is already in Mercator space)
+            const [mercX, mercY] = lonLatToMercator(label.coords[0], label.coords[1]);
+
+            // --- STEP B: PROJECT MERCATOR TO SCREEN PIXELS ---
+            const screenX = mercX * scale + translateX;
+            const screenY = -mercY * scale + translateY;
+
+            // --- STEP C: APPLY STYLE & MEASURE PIXELS ---
+            applyStyle(this.ctx, label.style, 1);
+            
+            const metrics = this.ctx.measureText(label.text);
+            
+            // Exact pixel dimensions in 1:1 screen pixel space
+            const textWidth = metrics.width;
+            
+            // Calculate font height using actual metrics, with fallback
+            const textHeight = (metrics.actualBoundingBoxAscent + metrics.actualBoundingBoxDescent) || 12;
+
+            const padding = 4; // Padding around text in screen pixels
+
+            const halfWidth = textWidth / 2 + padding;
+            const halfHeight = textHeight / 2 + padding;
+
+            // Construct bounding box in screen pixels
+            const box = {
+                left: screenX - halfWidth,
+                right: screenX + halfWidth,
+                top: screenY - halfHeight,
+                bottom: screenY + halfHeight
+            };
+
+            // --- STEP D: CHECK OVERLAPS ---
+            let overlaps = false;
+            for (const placed of placedBoxes) {
+                if (!(box.right < placed.left || 
+                    box.left > placed.right || 
+                    box.bottom < placed.top || 
+                    box.top > placed.bottom)) {
+                    overlaps = true;
+                    break;
+                }
+            }
+
+            // --- STEP E: RENDER IF NO OVERLAP ---
+            if (!overlaps) {
+                placedBoxes.push(box);
+                
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'middle';
+                
+                if (this.ctx.strokeStyle) {
+                    this.ctx.strokeText(label.text, screenX, screenY);
+                }
+                this.ctx.fillText(label.text, screenX, screenY);
+            }
+        }
+
+        this.labelQueue = [];
     }
 }
 
@@ -227,24 +310,18 @@ class SHPLayer extends Layer {
         super();
         this.config = config;
         this.shps = {};
+        if (!Object.hasOwn(this.config, 'scaleFunction')) {
+            this.config.scaleFunction = DEFAULT_DETAIL_LEVEL_FUNCTION;
+        }
     }
 
     async load() {
         const loadPromises = this.config.layers.map(entry =>  {
             return loadShapefile(entry.path).then(geojson => {
-
                 for (const feature of geojson.features) {
-
                     prepareGeometry(feature.geometry);
                 }
-                if (Array.isArray(entry.size)) {
-                    for (let size of entry.size) {
-                        this.shps[size] = geojson;
-                    }
-                } else {
-                    this.shps[entry.size] = geojson;
-                }
-                
+                this.shps[entry.size] = geojson;
             });
         });
         
@@ -254,22 +331,24 @@ class SHPLayer extends Layer {
     }
 
     render(map) {
-        if (map == null || !this.ready || !this.shps[this.getSizeIndex(map.viewport.zoomScale)]) {
-            return;
-        }
-        
-        const index = this.getSizeIndex(map.viewport.zoomScale);
-        if (!Object.hasOwn(this.shps, index)) {
+        if (map == null || !this.ready) {
             return;
         }
 
         const visibleBounds = map._visibleBounds || map.getVisibleBounds();
         const R = map.canvas.height / (2 * Math.PI);
         const currentScale = R * map.viewport.zoomScale;
+        const currentWebMercatorScale = scaleToWebMercatorZoom(2 * Math.PI * currentScale);
 
-        for (let feature of this.shps[index].features) {
+        const shp = this.config.scaleFunction(this, map.viewport.zoomScale);
+        
+        if (shp == null) {
+            return;
+        }
+
+        for (let feature of shp.features) {
             const geometry = feature.geometry;
-
+            
             if (geometry && geometry._mercatorBbox && !boundsIntersect(visibleBounds, geometry._mercatorBbox)) {
                 continue;
             }
@@ -282,7 +361,7 @@ class SHPLayer extends Layer {
             if (!style) continue;
 
             if (Object.hasOwn(this.config, 'visibilityRule')) {
-                if (!this.config.visibilityRule(properties, map.viewport)) {
+                if (!this.config.visibilityRule(properties, currentWebMercatorScale)) {
                     continue;
                 }
             } 
@@ -293,16 +372,32 @@ class SHPLayer extends Layer {
             }
 
             if (this.config.renders.includes('text') || Object.hasOwn(this.config, 'textRule')) {
-                const text = this.config.textRule ? this.config.textRule(properties, map.viewport) : null;
-                if (text !== null) {
-                    map.ctx.save();
-                    map.ctx.setTransform(1, 0, 0, 1, 0, 0);
-                    applyStyle(map.ctx, style, 1);
-                    map.ctx.font = style.font || DEFAULT_STYLE.font;
-                    map.ctx.textAlign = style.textAlign || DEFAULT_STYLE.textAlign;
-                    renderText(map, properties, text);
-                    map.ctx.restore();
+                const text = this.config.textRule ? this.config.textRule(properties, currentWebMercatorScale) : null;
+                if (text == null) {continue;}
+                let centroidX, centroidY;
+                if (geometry.type === 'Polygon') {
+                    [centroidX, centroidY] = getPolygonCentroid(geometry.coordinates);
+                } else {
+                    [centroidX, centroidY] = getMultiPolygonCentroid(geometry.coordinates);
                 }
+
+                let labelRank = properties.LABELRANK ?? -1;
+                if (labelRank == -1) {
+                    if (properties.FEATURECLA == 'Continent') {
+                        labelRank = 4;
+                    } else {
+                        labelRank = 5;
+                    }
+                    labelRank = Math.min(labelRank, 10);
+                }
+                
+                map.labelQueue.push({
+                    'text': text,
+                    'coords': [properties.LABEL_X ?? centroidX, properties.LABEL_Y ?? centroidY],
+                    'labelRank': properties.LABELRANK ?? 0,
+                    'scaleRank': properties.scalerank ?? properties.SCALERANK,
+                    'style': style
+                });
             }
         }
     }

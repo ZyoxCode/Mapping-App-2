@@ -1,4 +1,6 @@
 // utils.js //
+
+
 function mercatorX(lon) {
     return lon * Math.PI / 180;
 }
@@ -39,18 +41,33 @@ async function loadShapefile(name) {
         return _shapefileCache[name];
     }
 
-    const promise = (async () => {
+    try {
         const unzippedShp = toAbsoluteUrl('./data/' + name + '/' + name + '.shp');
+        let data;
 
         if (await pathExists(unzippedShp)) {
-            return shp(toAbsoluteUrl('./data/' + name + '/' + name));
+            data = await shp(toAbsoluteUrl('./data/' + name + '/' + name));
+        } else {
+            data = await shp('./data/' + name + '.zip');
         }
 
-        return shp('./data/' + name + '.zip');
-    })();
+        let geojson;
+        if (Array.isArray(data)) {
+            geojson = data[0]; 
+        } else if (data && !data.features && typeof data === 'object') {
+            const firstKey = Object.keys(data)[0];
+            geojson = data[firstKey];
+        } else {
+            geojson = data;
+        }
 
-    _shapefileCache[name] = promise;
-    return promise;
+        _shapefileCache[name] = geojson;
+        return geojson;
+
+    } catch (err) {
+        delete _shapefileCache[name];
+        throw err;
+    }
 }
 
 function plotMercatorPoint(index, x, y, map) {
@@ -70,6 +87,16 @@ function plotPoint(index, x, y, map) {
     } else {
         map.ctx.lineTo(projX, projY);
     }
+}
+
+function scaleToWebMercatorZoom(currentScale, tileSize = 256) {
+    if (currentScale <= 0) return 0;
+    
+    // Calculates fractional zoom level (e.g., scale of 512px = zoom 1)
+    const zoom = Math.log2(currentScale / tileSize);
+    
+    // Clamp to 0 if zoomed out further than full world view
+    return Math.max(0, zoom);
 }
 
 function computeBounds(coords) { // (x, y) pairs
@@ -99,6 +126,7 @@ function updateBounds(bounds, x, y) {
 function processRing(ringCoords, path, bounds) {
     for (let i = 0; i < ringCoords.length; i++) {
         const [lon, lat] = ringCoords[i];
+       
         const [x, y] = lonLatToMercator(lon, lat);
 
         if (bounds) {
@@ -106,6 +134,7 @@ function processRing(ringCoords, path, bounds) {
         }
 
         if (path) {
+            
             if (i === 0) {
                 path.moveTo(x, y);
             } else {
@@ -117,6 +146,7 @@ function processRing(ringCoords, path, bounds) {
 
 function prepareGeometry(geometry) {
     if (geometry == null) return;
+    
 
     geometry._partBounds = [];
 
@@ -126,7 +156,6 @@ function prepareGeometry(geometry) {
             const path = new Path2D();
 
             processRing(geometry.coordinates, path, bounds);
-
             geometry._path = path;
             geometry._partBounds.push(bounds);
             geometry._mercatorBbox = bounds;
@@ -200,4 +229,57 @@ function prepareGeometry(geometry) {
             break;
         }
     }
+}
+
+function getPolygonCentroid(coordinates) {
+    let area = 0;
+    let cx = 0;
+    let cy = 0;
+
+    const n = coordinates.length;
+
+    for (let i = 0; i < n; i++) {
+        const [x0, y0] = coordinates[i];
+        const [x1, y1] = coordinates[(i + 1) % n]; // Wrap around to first point
+
+        const crossProduct = (x0 * y1 - x1 * y0);
+        area += crossProduct;
+        cx += (x0 + x1) * crossProduct;
+        cy += (y0 + y1) * crossProduct;
+    }
+
+    area = area / 2;
+    if (area === 0) return coordinates[0]; // Fallback for collapsed geometries
+
+    cx = cx / (6 * area);
+    cy = cy / (6 * area);
+
+    return [cx, cy];
+}
+
+function getMultiPolygonCentroid(multiPolygonCoords) {
+    let largestRing = null;
+    let maxArea = -1;
+
+    for (const polygon of multiPolygonCoords) {
+        const outerRing = polygon[0]; // First array is always the outer ring
+        const ringArea = Math.abs(calculateRingArea(outerRing));
+
+        if (ringArea > maxArea) {
+            maxArea = ringArea;
+            largestRing = outerRing;
+        }
+    }
+
+    return getPolygonCentroid(largestRing);
+}
+
+function calculateRingArea(coordinates) {
+    let area = 0;
+    for (let i = 0; i < coordinates.length; i++) {
+        const [x0, y0] = coordinates[i];
+        const [x1, y1] = coordinates[(i + 1) % coordinates.length];
+        area += (x0 * y1 - x1 * y0);
+    }
+    return area / 2;
 }

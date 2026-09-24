@@ -52,8 +52,8 @@ function renderGeometry(map, geometry, config) {
     }
 }
 
-function renderText(map, properties, text) {
-    const [projX, projY] = map.project(properties.LABEL_X, properties.LABEL_Y);
+function renderText(map, coords, text) {
+    const [projX, projY] = map.project(coords[0], coords[1])
     map.ctx.strokeText(text, projX, projY);
     map.ctx.fillText(text, projX, projY);
 }

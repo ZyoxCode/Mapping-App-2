@@ -76,15 +76,45 @@ const mapLayers = [
                 }
             ],
             (properties) => {
-                switch (properties.FEATURECLA) {
-                    case 'International boundary (verify)':
-                    case 'Indefinite (please verify)':
+                if (properties.FEATURECLA == "International boundary (verify)" || properties.FEATURECLA == "Indefinite (please verify)") {
+                    if (properties.FCLASS_ISO.length == 0) {
                         return 0;
-                    default:
+                    } else {
                         return 1;
+                    }
+                } else {
+                    return 1;
                 }
             }
         )
+    }),
+    new SHPLayer({
+        'renders': ['fill'],
+        'layers': [
+            { 'path': 'ne_110m_glaciated_areas', 'size': 0},
+            { 'path': 'ne_50m_glaciated_areas', 'size': 1},
+            { 'path': 'ne_10m_glaciated_areas', 'size': 2},
+        ],
+        'style': new StyleRule([{
+            'strokeStyle': null,
+            'fillStyle': '#e7e7e7',
+        }])
+    }),
+    new SHPLayer({
+        'renders': ['stroke'],
+        'layers': [
+            { 'path': 'ne_50m_admin_0_boundary_lines_disputed_areas', 'size': 1},
+            { 'path': 'ne_10m_admin_0_boundary_lines_disputed_areas', 'size': 2},
+        ],
+        'style': new StyleRule([{
+            'strokeStyle': '#3d3d3d',
+            'lineWidth': 0.4,
+            'fillStyle': null,
+            'dashed': [5, 5]
+        }]),
+        'scaleFunction': (layer, scale) => {
+            return layer.shps[1];
+        }
     }),
     new LineLayer({
         'layers': [
@@ -177,26 +207,68 @@ const mapLayers = [
         ],
         'style': new StyleRule(
             [{
-                'strokeStyle': '#111111',
+                'strokeStyle': '#ffffff',
                 'lineWidth': 1.7,
-                'fillStyle': '#ffffff'
+                'fillStyle': '#111111'
             }]
         ),
-        'textRule': (properties, viewport) => {
-            if (properties.MIN_LABEL > viewport.zoomScale / 2 + 1.5) {
-                return null;
-            } 
-            if (properties.NAME_EN.length < 15 || viewport.zoomScale > 7) {
-                return properties.NAME_EN;
-            } else if (properties.BRK_NAME.length < 15) {
+        'textRule': (properties, scale) => {
+            // if (properties.NAME_EN == "Ghana" || properties.NAME_EN == "Ivory Coast") {
+            //     Object.entries(properties).forEach(([key, value]) => {
+                    
+            //         if (key === "NAME_EN" || key === "LABELRANK" || key === "MIN_ZOOM" || key === "LEVEL" || key === "MIN_ZOOM" || key === "scalerank") {
+            //             console.log(`${key}: ${value}`);
+            //         }
+            //     });
+            //     console.log('----------------------')
+            // }
+            
+            if (properties.BRK_NAME == 'China') {
                 return properties.BRK_NAME;
-            } else {
-                return properties.ABBREV;
             }
+
+            if (scale > 6) {
+                return properties.NAME_EN;
+            }
+
+            if (properties.NAME_EN.length < 15) {
+                return properties.NAME_EN;
+            }
+
+        
+            if (properties.BRK_NAME.length < 15) {
+                return properties.BRK_NAME;
+            }
+
+            return properties.ABBREV;
+            
+        },
+        'visibilityRule': (properties, scale) => {
+            return scale >= properties.MIN_LABEL && scale <= properties.MAX_LABEL;
         },
         'scaleFunction': (layer, scale) => {
             return layer.shps[0];
         }
+    }),
+    new SHPLayer({
+        'renders': ['text'],
+        'layers': [
+            { 'path': 'ne_110m_geography_regions_polys', 'size': 0 },
+            { 'path': 'ne_50m_geography_regions_polys', 'size': 1 },
+            { 'path': 'ne_10m_geography_regions_polys', 'size': 2 },
+        ],
+        'style': new StyleRule([{
+            'strokeStyle': '#adadad',
+            'lineWidth': 0.5,
+            'fillStyle': '#363636'
+        }]),
+        'textRule': (properties, scale) => {
+            return properties.NAME;
+            
+        },
+        'visibilityRule': (properties, scale) => {
+            return scale >= properties.MIN_LABEL && scale <= properties.MAX_LABEL;
+        },
     }),
 ];
 
