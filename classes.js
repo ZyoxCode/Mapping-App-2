@@ -102,7 +102,7 @@ class PerformanceMonitor {
     }
 }
 
-class Map {
+class GeoMap {
     constructor(canvas, layers) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d', {'alpha': false, 'desynchronized': true});
@@ -184,7 +184,6 @@ class Map {
         this.renderLabels();
         // Restore screen coordinate space
         this.perf.end();
-        
         
     }
 

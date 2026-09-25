@@ -1,34 +1,34 @@
-function renderGeometry(map, geometry, config) {
-    if (!geometry) return;
+function addGeometryToPath(mergedPath, geometry, visibleBounds) {
+    if (!geometry || !geometry._path) return;
 
-    const visibleBounds = map._visibleBounds;
+    const parts = Array.isArray(geometry._path) ? geometry._path : [geometry._path];
+    const partBounds = geometry._partBounds && geometry._partBounds.length === parts.length
+        ? geometry._partBounds
+        : null;
 
-    if (geometry._mercatorBbox && !boundsIntersect(visibleBounds, geometry._mercatorBbox)) {
-        return;
-    }
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (!part) continue;
 
-    const rendersFill = config.renders.doRender('fill');
-    const rendersStroke = config.renders.doRender('stroke');
-    if (!rendersFill && !rendersStroke) return;
-
-    if (geometry.type === 'Polygon' || geometry.type === 'LineString') {
-        if (geometry._path) {
-            if (rendersFill) map.ctx.fill(geometry._path, 'evenodd');
-            if (rendersStroke) map.ctx.stroke(geometry._path);
+        // Part-level Bounding Box Culling (for MultiPolygon / MultiLineString)
+        if (partBounds && !boundsIntersect(visibleBounds, partBounds[i])) {
+            continue;
         }
-    } else if (geometry.type === 'MultiPolygon' || geometry.type === 'MultiLineString') {
-        if (Array.isArray(geometry._path) && geometry._partBounds) {
-            for (let i = 0; i < geometry._path.length; i++) {
-                if (boundsIntersect(visibleBounds, geometry._partBounds[i])) {
-                    const partPath = geometry._path[i];
-                    if (rendersFill) map.ctx.fill(partPath, 'evenodd');
-                    if (rendersStroke) map.ctx.stroke(partPath);
+
+        if (part instanceof Path2D) {
+            // LineString / MultiLineString part - no holes involved
+            mergedPath.addPath(part);
+        } else {
+            // Polygon part: { path: outerRing, holes: [{ path, bounds }, ...] }
+            mergedPath.addPath(part.path);
+            for (const hole of part.holes) {
+                if (boundsIntersect(visibleBounds, hole.bounds)) {
+                    mergedPath.addPath(hole.path);
                 }
             }
         }
     }
 }
-
 function renderText(map, coords, text) {
     const [projX, projY] = map.project(coords[0], coords[1])
     map.ctx.strokeText(text, projX, projY);

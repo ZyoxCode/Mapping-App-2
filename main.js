@@ -9,7 +9,7 @@ function updateCanvasSize() {
 updateCanvasSize();
 
 
-const map = new Map(canvas, mapLayers);
+const map = new GeoMap(canvas, mapLayers);
 
 // 3. Simple Render Loop & Demand Trigger
 let isAnimating = false;

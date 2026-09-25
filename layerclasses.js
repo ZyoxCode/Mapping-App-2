@@ -145,6 +145,7 @@ class SHPLayer extends Layer {
         super(name, enabled, config);
 
         this.shps = {};
+        this.zoomLayers = {};
         this.polyRules = Object.assign({}, DEFAULT_POLY_RULESET, this.config.polyRules);
 
         this.textRules = Object.assign({}, DEFAULT_TEXT_RULESET, this.config.textRules);
@@ -156,26 +157,47 @@ class SHPLayer extends Layer {
         this.style = !Object.hasOwn(this.config, 'style')
             ? {'type': 'simple', 'value': new Style({})}
             : this.config.style;
+
+        this.zoomLayerConfig = !Object.hasOwn(this.config, 'zoomLayerConfig')
+            ? this.config.shpPaths.map((value, index) => ({'shpIndex': index, 'detailLevel': 1}))
+            : this.config.zoomLayerConfig;
+
     }
 
     async load() {
-        let index = 0;
-        const loadPromises = this.config.paths.map(entry =>  {
-            return loadShapefile(entry).then(geojson => {
-                if (Object.hasOwn(this.config, 'override')) {
-                    this.config.override(geojson);
-                }
-                for (const feature of geojson.features) {
-                    prepareGeometry(feature.geometry);
-                }
-                this.shps[index] = geojson;
-                index++;
-            });
+
+        const shpLoadPromises = this.config.shpPaths.map(async (entry) => {
+            const geojson = await loadShapefile(entry);
+    
+            if (Object.hasOwn(this.config, 'override')) {
+                this.config.override(geojson);
+            }
+    
+            return geojson;
         });
+    
+        this.shps = await Promise.all(shpLoadPromises);
+
+        const geometryLoadPromises = this.zoomLayerConfig.map((entry) => {
+            const sourceGeojson = this.shps[entry.shpIndex];
+            
+            const features = sourceGeojson.features.flatMap((feature) => {
+                const preparedGeom = prepareGeometry(feature.geometry, entry.detailLevel);
+                
+                if (!preparedGeom) {
+                    return [];
+                }
         
-        await Promise.all(loadPromises);
+                return [{
+                    properties: feature.properties,
+                    geometry: preparedGeom
+                }];
+            });
+            return features;
+        })
+
+        this.zoomLayers = await Promise.all(geometryLoadPromises);
         this.ready = true;
-        
     }
 
     render(map) {
@@ -186,11 +208,17 @@ class SHPLayer extends Layer {
         const currentScale = R * map.viewport.zoomScale;
         const currentWebMercatorScale = scaleToWebMercatorZoom(2 * Math.PI * currentScale);
 
-        const shp = this.polyRules.choice(this.shps, currentWebMercatorScale);
-        
+        const shp = this.polyRules.choice(this.zoomLayers, currentWebMercatorScale);
+
         if (shp == null) {return;}
+
+        const doFill = this.renders.doRender('fill');
+        const doStroke = this.renders.doRender('stroke');
+        const doText = this.renders.doRender('text');
+
+        const buckets = (doFill || doStroke) ? new window.Map() : null; // Style -> Path2D
         
-        for (let feature of shp.features) {
+        for (let feature of shp) {
             const geometry = feature.geometry;
             
             if (geometry && geometry._mercatorBbox && !boundsIntersect(visibleBounds, geometry._mercatorBbox)) {
@@ -198,6 +226,7 @@ class SHPLayer extends Layer {
             }
 
             const properties = feature.properties;
+            
             let style;
             if (this.style.type == 'simple') {
                 style = this.style.value;
@@ -206,34 +235,41 @@ class SHPLayer extends Layer {
             }
             
             if (!style) continue;
-
+            
             if (!this.polyRules.show(properties, currentWebMercatorScale)) {continue;}
 
-            if (this.renders.doRender('fill') || this.renders.doRender('stroke')) {
-                style.apply(map.ctx, currentScale);
-                renderGeometry(map, geometry, this.config);
+            if (buckets) {
+                let path = buckets.get(style);
+                if (!path) {
+                    path = new Path2D();
+                    buckets.set(style, path);
+                }
+                addGeometryToPath(path, geometry, visibleBounds);
             }
  
-            if (this.renders.doRender('text')) {
+            if (doText) {
 
                 if (!this.textRules.show(properties, currentWebMercatorScale)) {continue;}
                 const text = this.textRules.choice(properties, currentWebMercatorScale);
                 if (text == null) {continue;}
                 let centroidX, centroidY;
                 
-                if (geometry.type === 'Polygon') {
-                    [centroidX, centroidY] = getPolygonCentroid(geometry.coordinates);
-                } else {
-                    [centroidX, centroidY] = getMultiPolygonCentroid(geometry.coordinates);
-                }
                 
                 map.labelQueue.push({
                     'text': text,
-                    'coords': [properties.LABEL_X ?? centroidX, properties.LABEL_Y ?? centroidY],
+                    'coords': [properties.LABEL_X ?? geometry._centroid[0], properties.LABEL_Y ?? geometry._centroid[1]],
                     'labelRank': properties.LABELRANK ?? 0,
                     'scaleRank': properties.scalerank ?? properties.SCALERANK,
                     'style': style
                 });
+            }
+        }
+
+        if (buckets && buckets.size > 0) {
+            for (const [style, path] of buckets) {
+                style.apply(map.ctx, currentScale);
+                if (doFill) map.ctx.fill(path, 'evenodd');
+                if (doStroke) map.ctx.stroke(path);
             }
         }
     }
