@@ -147,7 +147,7 @@ function prepareGeometry(geometry, detailLevel) {
                 }
         
                 // Cull if total combined complexity falls below threshold
-                if (detailLevel !== 2 && (totalVertices / step) <= DEFAULT_CULL_COUNT) {
+                if (detailLevel !== 1 && (totalVertices / step) <= DEFAULT_CULL_COUNT) {
                     continue;
                 }
         

@@ -48,7 +48,9 @@ const mapLayers = [
                 'show': (discriminator, scale) => {
                     if (scale < DEFAULT_ZOOM_BOUNDARIES[1]) {
                         return false;
-                    } else {return true;}
+                    } else {
+                        return true;
+                    }
                 },
                 'choice': (shps, scale) => {
                     return shps[0];
@@ -106,6 +108,43 @@ const mapLayers = [
                     return properties.name;
                 }
             },
+        }
+    ),
+    new SHPLayer(
+        'Rivers',
+        true,
+        {
+            'renders': new RenderOptions({
+                'stroke': true,
+                // 'text': true,
+            }),
+            'style': {
+                'type': 'ruled',
+                'value': [
+                    new Style({
+                        'font': '700 italic 10px "Inter", sans-serif',
+                        'strokeStyle': '#64bee7',
+                        'lineWidth': 1,
+                    }),
+                    new Style({
+                        'font': '700 italic 10px "Inter", sans-serif',
+                        'strokeStyle': '#64bee7',
+                        'lineWidth': 0.5,
+                    })
+                ]
+            },
+            'shpPaths': [
+                'ne_110m_rivers_lake_centerlines',
+                'ne_50m_rivers_lake_centerlines',
+                'ne_10m_rivers_lake_centerlines',
+            ],
+            'polyRules': {
+                'style': (properties, scale) => {
+                    if (properties.scalerank < 3) {
+                        return 0;
+                    } else return 1;
+                } 
+            }
         }
     ),
     new SHPLayer(
@@ -231,6 +270,34 @@ const mapLayers = [
             },
             'shpPaths': [
                 'ne_10m_bathymetry_H_3000'
+            ],
+            'zoomLayerConfig': [
+                {'shpIndex': 0, 'detailLevel': 0.01},
+                {'shpIndex': 0, 'detailLevel': 0.3},
+                {'shpIndex': 0, 'detailLevel': 1},
+            ],
+            'polyRules': {
+                'show': (discriminator, scale) => {
+                    return true;
+                }
+            }
+        }
+    ),
+    new SHPLayer(
+        'Bathymetry 3',
+        true,
+        {
+            'renders': new RenderOptions({
+                'fill': true,
+            }),
+            'style': {
+                'type': 'simple',
+                'value': new Style({
+                    'fillStyle': '#5bb6da',
+                })
+            },
+            'shpPaths': [
+                'ne_10m_bathymetry_F_5000'
             ],
             'zoomLayerConfig': [
                 {'shpIndex': 0, 'detailLevel': 0.01},
@@ -413,20 +480,7 @@ const mapLayers = [
                     return properties.NAME;
                 }
             },
-            'override': (geojson) => {
-                for (let feature of geojson.features) {
-                    feature.properties.LABELRANK = 3;
-                    if (feature.properties.FEATURECLA === 'Continent') {
-                        feature.properties.MAX_LABEL = 2.3;
-                    } else if (feature.properties.FEATURECLA === 'Pen/cape') {
-                        feature.properties.MIN_LABEL = Math.max(feature.properties.MIN_LABEL, 3);
-                        feature.properties.MAX_LABEL = Math.max(feature.properties.MAX_LABEL, 8);
-                    } else {
-                        feature.properties.MIN_LABEL += 1;
-                        feature.properties.MAX_LABEL += 1;
-                    }
-                }
-            }
+            'override': geoFeatureOverride
         }
     ), 
 ]
