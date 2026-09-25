@@ -7,16 +7,36 @@ DEFAULT_STYLE = {
     'dashed': []
 }
 
-DEFAULT_ZOOM_BOUNDARIES = [2, 20];
-DEFAULT_DETAIL_LEVEL_FUNCTION = (layer, scale) => {
-    let index;
-    if (scale < DEFAULT_ZOOM_BOUNDARIES[0]) {
-        index = 0;
-    } else if (scale < DEFAULT_ZOOM_BOUNDARIES[1]) {
-        index = 1;
-    } else {
-        index = 2;
-    }
+DEFAULT_ZOOM_BOUNDARIES = [3, 6];
 
-    return layer.shps[index];
-} 
+DEFAULT_POLY_RULESET = {
+    'choice': (discriminator, scale) => {
+        let index;
+        if (scale < DEFAULT_ZOOM_BOUNDARIES[0]) {
+            index = 0;
+        } else if (scale < DEFAULT_ZOOM_BOUNDARIES[1]) {
+            index = 1;
+        } else {
+            index = 2;
+        }
+        return discriminator[index];
+    },
+    'show': (discriminator, scale) => {
+        return true;
+    },
+    'style': (discriminator, scale) => {
+        return 0;
+    }
+}
+
+DEFAULT_TEXT_RULESET = {
+    'choice': (discriminator, scale) => {
+        discriminator.NAME_EN ?? 'ERR1'
+    },
+    'show': (discriminator, scale) => {
+        return true;
+    },
+    'style': (discriminator, scale) => {
+        return 0;
+    }
+}

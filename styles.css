@@ -9,3 +9,17 @@ canvas {
     height: 100vh;
     touch-action: none; /* Prevents Chrome browser gesture lock delays */
 }
+
+#stats-overlay {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.8);
+    color: #00ffcc;
+    font-family: monospace;
+    font-size: 13px;
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 9999;
+}

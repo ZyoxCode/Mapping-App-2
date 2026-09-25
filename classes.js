@@ -11,6 +11,97 @@ class ViewPort {
         this.isDragging = false;
     }
 }
+
+class RenderOptions {
+    constructor(renders) {
+        const mergedRenders = Object.assign({}, {'fill': false, 'stroke': false, 'text': false, 'dynamicDetail': false}, renders);
+        this.fill = mergedRenders.fill;
+        this.stroke = mergedRenders.stroke;
+        this.text = mergedRenders.text;
+        this.dynamicDetail = mergedRenders.dynamicDetail;
+    }
+    doRender(option) {
+        return this[option];
+    }
+}
+
+class Style {
+    constructor(style) {
+        this.style = Object.assign({}, DEFAULT_STYLE, style);
+    }
+    apply(ctx, scale) {
+        if (Array.isArray(this.style.dashed) && this.style.dashed.length > 0) {
+            const scaledDash = this.style.dashed.map(dashLength => dashLength / scale);
+            ctx.setLineDash(scaledDash);
+        } else {
+            ctx.setLineDash([]);
+        }
+
+        for (let attrName in this.style) {
+            if (this.style[attrName] != null) {
+                if (attrName === 'dashed') {
+                    continue;
+                } else if (attrName === 'lineWidth') {
+                    ctx[attrName] = this.style[attrName] / scale;
+                } else {
+                    ctx[attrName] = this.style[attrName];
+                }
+            }
+        }
+    }
+}
+
+class PerformanceMonitor {
+    constructor({ sampleSize = 60, updateIntervalMs = 500 } = {}) {
+        this.frameTimeEl = document.getElementById('frame-time');
+        this.fpsEl = document.getElementById('fps');
+        
+        this.sampleSize = sampleSize;
+        this.updateIntervalMs = updateIntervalMs;
+        
+        this.frameTimes = new Float64Array(sampleSize);
+        this.sampleIndex = 0;
+        this.sampleCount = 0;
+        
+        this.lastUiUpdate = 0;
+        this.lastFrameTime = performance.now();
+    }
+
+    begin() {
+        this.startTime = performance.now();
+    }
+
+    end() {
+        const now = performance.now();
+        const renderTime = now - this.startTime; // Time taken by the render pass itself
+        
+        // Push sample into circular buffer
+        this.frameTimes[this.sampleIndex] = renderTime;
+        this.sampleIndex = (this.sampleIndex + 1) % this.sampleSize;
+        if (this.sampleCount < this.sampleSize) this.sampleCount++;
+
+        // Update DOM display periodically to prevent layout thrashing
+        if (now - this.lastUiUpdate >= this.updateIntervalMs) {
+            let sum = 0;
+            for (let i = 0; i < this.sampleCount; i++) {
+                sum += this.frameTimes[i];
+            }
+            const avgRenderTime = sum / this.sampleCount;
+            
+            // Measure actual Framerate (delta between requestAnimationFrame callbacks)
+            const frameDelta = now - this.lastFrameTime;
+            const fps = Math.round(1000 / frameDelta);
+
+            this.frameTimeEl.textContent = avgRenderTime.toFixed(2);
+            this.fpsEl.textContent = fps;
+
+            this.lastUiUpdate = now;
+        }
+
+        this.lastFrameTime = now;
+    }
+}
+
 class Map {
     constructor(canvas, layers) {
         this.canvas = canvas;
@@ -18,6 +109,7 @@ class Map {
         this.viewport = new ViewPort();
         this.layers = layers;
         this.labelQueue = [];
+        this.perf = new PerformanceMonitor();
     }
 
     project(lon, lat) {
@@ -63,7 +155,9 @@ class Map {
     }
 
     render() {
+        this.perf.begin();
         this.labelQueue = [];
+        
         // Clear canvas background in screen coordinates
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
         this.ctx.fillStyle = '#ffffff';
@@ -81,11 +175,15 @@ class Map {
         this.ctx.setTransform(scale, 0, 0, -scale, translateX, translateY);
 
         for (let layer of this.layers) {
+            if (layer.enabled != true) {
+                continue;
+            }
             layer.render(this);
         }
         this.ctx.setTransform(1, 0, 0, 1, 0, 0);
         this.renderLabels();
         // Restore screen coordinate space
+        this.perf.end();
         
         
     }
@@ -93,8 +191,6 @@ class Map {
     renderLabels() {
         
         if (this.labelQueue.length === 0) return;
-        console.log(this.labelQueue);
-
         // 1. Sort queue by priority
         this.labelQueue.sort((a, b) => {
             if (a.scaleRank !== b.scaleRank) return a.scaleRank - b.scaleRank;
@@ -118,7 +214,7 @@ class Map {
             const screenY = -mercY * scale + translateY;
 
             // --- STEP C: APPLY STYLE & MEASURE PIXELS ---
-            applyStyle(this.ctx, label.style, 1);
+            label.style.apply(this.ctx, 1);
             
             const metrics = this.ctx.measureText(label.text);
             
@@ -168,238 +264,6 @@ class Map {
         }
 
         this.labelQueue = [];
-    }
-}
-
-class Layer {
-    constructor() {
-        this.ready = false;
-    }
-
-    async load() {
-        throw new Error("This method must be implemented in a subclass")
-    }
-
-    render(map) {
-        throw new Error("This method must be implemented in a subclass")
-    }
-}
-
-class StaticLayer extends Layer {
-    constructor() {
-        super();
-    }
-}
-
-class LineLayer extends StaticLayer {
-    constructor(config) {
-        super();
-        
-        this.config = config;
-    }
-
-    async load() {
-        for (const [index, layer] of this.config.layers.entries()) {
-            const geometry = layer.geometry;
-            const path = new Path2D();
-            
-            let xMin = Infinity;
-            let xMax = -Infinity;
-            let yMin = Infinity;
-            let yMax = -Infinity;
-
-            for (const [index, [lon, lat]] of geometry.coordinates.entries()) {
-                const [x, y] = lonLatToMercator(lon, lat);
-
-                xMin = Math.min(xMin, x);
-                xMax = Math.max(xMax, x);
-                yMin = Math.min(yMin, y);
-                yMax = Math.max(yMax, y);
-
-                if (index == 0) {
-                    path.moveTo(x, y);
-                } else {
-                    path.lineTo(x, y);
-                }
-                
-            }
-            this.config.layers[index].geometry._path = path;
-            this.config.layers[index].geometry._partBounds = [xMin, yMin, xMax, yMax];
-        }
-
-        this.ready = true;
-
-    }
-    
-    render(map) {
-        const R = map.canvas.height / (2 * Math.PI);
-        const scale = R * map.viewport.zoomScale;
-
-        if (!this.ready) return;
-
-        for (let layer of this.config.layers) {
-            
-            const geometry = layer.geometry;
-            const properties = layer.properties;
-
-            if (Object.hasOwn(this.config, 'visibilityRule')) {
-                if (!this.config.visibilityRule(properties, map.viewport)) {
-                    continue;
-                }
-            } 
-            
-            if (!boundsIntersect(map._visibleBounds || map.getVisibleBounds(), geometry._partBounds)) {
-                continue;
-            }
-            applyStyle(map.ctx, this.config.styles[properties.styleIndex], scale);
-            map.ctx.stroke(geometry._path);
-        }
-    }
-}
-
-class RectLayer extends StaticLayer {
-    constructor(corner1, corner2, color) {
-        super();
-        this.corner1 = corner1;
-        this.corner2 = corner2;
-        this.color = color;
-        
-        this._mercatorBbox = null;
-        this._x = 0;
-        this._y = 0;
-        this._width = 0;
-        this._height = 0;
-    }
-
-    async load() {
-        const [lon1, lat1] = this.corner1;
-        const [lon2, lat2] = this.corner2;
-
-        const [x1, y1] = lonLatToMercator(lon1, lat1);
-        const [x2, y2] = lonLatToMercator(lon2, lat2);
-
-        const xMin = Math.min(x1, x2);
-        const xMax = Math.max(x1, x2);
-        const yMin = Math.min(y1, y2);
-        const yMax = Math.max(y1, y2);
-
-        this._mercatorBbox = [xMin, yMin, xMax, yMax];
-        
-        this._x = xMin;
-        this._y = yMin;
-        this._width = xMax - xMin;
-        this._height = yMax - yMin;
-
-        this.ready = true;
-    }
-
-    render(map) {
-        if (!this.ready) return;
-
-        if (!boundsIntersect(map._visibleBounds || map.getVisibleBounds(), this._mercatorBbox)) {
-            return;
-        }
-
-        map.ctx.fillStyle = this.color;
-        map.ctx.fillRect(this._x, this._y, this._width, this._height);
-    }
-}
-
-class SHPLayer extends Layer {
-    constructor(config) {
-        super();
-        this.config = config;
-        this.shps = {};
-        if (!Object.hasOwn(this.config, 'scaleFunction')) {
-            this.config.scaleFunction = DEFAULT_DETAIL_LEVEL_FUNCTION;
-        }
-    }
-
-    async load() {
-        const loadPromises = this.config.layers.map(entry =>  {
-            return loadShapefile(entry.path).then(geojson => {
-                for (const feature of geojson.features) {
-                    prepareGeometry(feature.geometry);
-                }
-                this.shps[entry.size] = geojson;
-            });
-        });
-        
-        await Promise.all(loadPromises);
-        this.ready = true;
-        
-    }
-
-    render(map) {
-        if (map == null || !this.ready) {
-            return;
-        }
-
-        const visibleBounds = map._visibleBounds || map.getVisibleBounds();
-        const R = map.canvas.height / (2 * Math.PI);
-        const currentScale = R * map.viewport.zoomScale;
-        const currentWebMercatorScale = scaleToWebMercatorZoom(2 * Math.PI * currentScale);
-
-        const shp = this.config.scaleFunction(this, map.viewport.zoomScale);
-        
-        if (shp == null) {
-            return;
-        }
-
-        for (let feature of shp.features) {
-            const geometry = feature.geometry;
-            
-            if (geometry && geometry._mercatorBbox && !boundsIntersect(visibleBounds, geometry._mercatorBbox)) {
-                continue;
-            }
-
-            const properties = feature.properties;
-            let style = !Object.hasOwn(this.config, 'style')
-                ? DEFAULT_STYLE
-                : this.config.style.styles[this.config.style.selector(feature.properties)];
-
-            if (!style) continue;
-
-            if (Object.hasOwn(this.config, 'visibilityRule')) {
-                if (!this.config.visibilityRule(properties, currentWebMercatorScale)) {
-                    continue;
-                }
-            } 
-
-            if (this.config.renders.includes('fill') || this.config.renders.includes('stroke')) {
-                applyStyle(map.ctx, style, currentScale);
-                renderGeometry(map, geometry, this.config);
-            }
-
-            if (this.config.renders.includes('text') || Object.hasOwn(this.config, 'textRule')) {
-                const text = this.config.textRule ? this.config.textRule(properties, currentWebMercatorScale) : null;
-                if (text == null) {continue;}
-                let centroidX, centroidY;
-                if (geometry.type === 'Polygon') {
-                    [centroidX, centroidY] = getPolygonCentroid(geometry.coordinates);
-                } else {
-                    [centroidX, centroidY] = getMultiPolygonCentroid(geometry.coordinates);
-                }
-
-                let labelRank = properties.LABELRANK ?? -1;
-                if (labelRank == -1) {
-                    if (properties.FEATURECLA == 'Continent') {
-                        labelRank = 4;
-                    } else {
-                        labelRank = 5;
-                    }
-                    labelRank = Math.min(labelRank, 10);
-                }
-                
-                map.labelQueue.push({
-                    'text': text,
-                    'coords': [properties.LABEL_X ?? centroidX, properties.LABEL_Y ?? centroidY],
-                    'labelRank': properties.LABELRANK ?? 0,
-                    'scaleRank': properties.scalerank ?? properties.SCALERANK,
-                    'style': style
-                });
-            }
-        }
     }
 }
 

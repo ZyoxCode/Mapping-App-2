@@ -1,26 +1,3 @@
-function applyStyle(ctx, style, scale) {
-    const mergedStyle = Object.assign({}, DEFAULT_STYLE, style);
-    
-    if (Array.isArray(mergedStyle.dashed) && mergedStyle.dashed.length > 0) {
-        const scaledDash = mergedStyle.dashed.map(dashLength => dashLength / scale);
-        ctx.setLineDash(scaledDash);
-    } else {
-        ctx.setLineDash([]);
-    }
-
-    for (let attrName in mergedStyle) {
-        if (mergedStyle[attrName] != null) {
-            if (attrName === 'dashed') {
-                continue;
-            } else if (attrName === 'lineWidth') {
-                ctx[attrName] = mergedStyle[attrName] / scale;
-            } else {
-                ctx[attrName] = mergedStyle[attrName];
-            }
-        }
-    }
-}
-
 function renderGeometry(map, geometry, config) {
     if (!geometry) return;
 
@@ -30,8 +7,8 @@ function renderGeometry(map, geometry, config) {
         return;
     }
 
-    const rendersFill = config.renders.includes('fill');
-    const rendersStroke = config.renders.includes('stroke');
+    const rendersFill = config.renders.doRender('fill');
+    const rendersStroke = config.renders.doRender('stroke');
     if (!rendersFill && !rendersStroke) return;
 
     if (geometry.type === 'Polygon' || geometry.type === 'LineString') {

@@ -231,55 +231,89 @@ function prepareGeometry(geometry) {
     }
 }
 
-function getPolygonCentroid(coordinates) {
+
+function getPolygonCentroid(rings) {
+    if (!rings || !rings.length || !rings[0] || !rings[0].length) {
+        return [0, 0]; // Absolute fallback
+    }
+
+    const outerRing = rings[0]; // First ring is the exterior boundary
+    const n = outerRing.length;
+
     let area = 0;
     let cx = 0;
     let cy = 0;
 
-    const n = coordinates.length;
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
 
     for (let i = 0; i < n; i++) {
-        const [x0, y0] = coordinates[i];
-        const [x1, y1] = coordinates[(i + 1) % n]; // Wrap around to first point
+        const [x0, y0] = outerRing[i];
+        const [x1, y1] = outerRing[(i + 1) % n];
 
-        const crossProduct = (x0 * y1 - x1 * y0);
-        area += crossProduct;
-        cx += (x0 + x1) * crossProduct;
-        cy += (y0 + y1) * crossProduct;
+        // Track bounding box for zero-area fallback
+        if (x0 < minX) minX = x0;
+        if (x0 > maxX) maxX = x0;
+        if (y0 < minY) minY = y0;
+        if (y0 > maxY) maxY = y0;
+
+        // Shoelace algorithm cross-product
+        const cross = (x0 * y1 - x1 * y0);
+        area += cross;
+        cx += (x0 + x1) * cross;
+        cy += (y0 + y1) * cross;
     }
 
     area = area / 2;
-    if (area === 0) return coordinates[0]; // Fallback for collapsed geometries
+
+    // Check for 0 area (sliver/line) or NaN results (corrupted coordinates)
+    if (Math.abs(area) < 1e-12 || isNaN(cx) || isNaN(cy)) {
+        return [(minX + maxX) / 2, (minY + maxY) / 2];
+    }
 
     cx = cx / (6 * area);
     cy = cy / (6 * area);
 
+    if (isNaN(cx) || isNaN(cy)) {
+        return [(minX + maxX) / 2, (minY + maxY) / 2];
+    }
+
     return [cx, cy];
 }
 
-function getMultiPolygonCentroid(multiPolygonCoords) {
-    let largestRing = null;
+function getMultiPolygonCentroid(polygons) {
+    if (!polygons || !polygons.length) {
+        return [0, 0];
+    }
+
+    let largestPolygonRings = null;
     let maxArea = -1;
 
-    for (const polygon of multiPolygonCoords) {
-        const outerRing = polygon[0]; // First array is always the outer ring
-        const ringArea = Math.abs(calculateRingArea(outerRing));
+    for (const polygonRings of polygons) {
+        if (!polygonRings || !polygonRings.length) continue;
+
+        const outerRing = polygonRings[0];
+        let ringArea = 0;
+
+        for (let i = 0; i < outerRing.length; i++) {
+            const [x0, y0] = outerRing[i];
+            const [x1, y1] = outerRing[(i + 1) % outerRing.length];
+            ringArea += (x0 * y1 - x1 * y0);
+        }
+
+        ringArea = Math.abs(ringArea / 2);
 
         if (ringArea > maxArea) {
             maxArea = ringArea;
-            largestRing = outerRing;
+            largestPolygonRings = polygonRings;
         }
     }
 
-    return getPolygonCentroid(largestRing);
-}
-
-function calculateRingArea(coordinates) {
-    let area = 0;
-    for (let i = 0; i < coordinates.length; i++) {
-        const [x0, y0] = coordinates[i];
-        const [x1, y1] = coordinates[(i + 1) % coordinates.length];
-        area += (x0 * y1 - x1 * y0);
+    // Process centroid of largest ring group
+    if (largestPolygonRings) {
+        return getPolygonCentroid(largestPolygonRings);
     }
-    return area / 2;
+
+    // Fallback if no valid ring was parsed
+    return [0, 0];
 }
