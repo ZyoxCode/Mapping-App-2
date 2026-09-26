@@ -87,6 +87,7 @@ canvas.addEventListener('wheel', (e) => {
 
 // 5. Initial Load & Paint
 const layerLoadPromises = map.layers.map((layer) => {
+    console.log(layer.enabled);
     if (layer.enabled == false) {return;}
     return layer.load().then(() => {
         // Trigger a render immediately as each individual layer finishes loading

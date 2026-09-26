@@ -141,9 +141,9 @@ class RectLayer extends StaticLayer {
 }
 
 class SHPLayer extends Layer {
-    constructor(name, enabled, config) {
+    constructor(name, enabled, config, print=false) {
         super(name, enabled, config);
-
+        this.print = print;
         this.shps = {};
         this.zoomLayers = {};
         this.polyRules = Object.assign({}, DEFAULT_POLY_RULESET, this.config.polyRules);
@@ -172,7 +172,10 @@ class SHPLayer extends Layer {
             if (Object.hasOwn(this.config, 'override')) {
                 this.config.override(geojson);
             }
-    
+            if (this.print) {
+                console.log(geojson);
+            }
+       
             return geojson;
         });
     

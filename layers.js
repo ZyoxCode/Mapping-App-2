@@ -483,4 +483,33 @@ const mapLayers = [
             'override': geoFeatureOverride
         }
     ), 
+    new SHPLayer(
+        'City Points',
+        false,
+        {
+            'renders': new RenderOptions({'text': true}),
+            'style': {
+                'type': 'simple',
+                'value': new Style({
+                    'font': '700 italic 10px "Inter", sans-serif',
+                    'strokeStyle': '#ffffff',
+                    'lineWidth': 1.2,
+                    'fillStyle': '#4d4d4d',
+                })
+            },
+            'shpPaths': [
+                'ne_110m_populated_places_simple'
+            ],
+            'textRules': {
+                'show': (properties, scale) => {
+                    return scale >= properties.MIN_LABEL && scale <= properties.MAX_LABEL;
+                },
+                'choice': (properties, scale) => {
+                    return properties.NAME;
+                }
+            },
+            'override': geoFeatureOverride
+        }
+    ), 
+    true
 ]
